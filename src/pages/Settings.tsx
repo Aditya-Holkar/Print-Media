@@ -136,6 +136,7 @@ export default function Settings() {
         <Txt label="App PIN (leave empty for none)" v={d.appPin} on={(s) => up({ appPin: s.replace(/\D/g, '').slice(0, 8) })} type="password" />
         {'Notification' in window && <button className="btn-line" onClick={() => Notification.requestPermission()}>Allow notifications for new jobs</button>}
         {installEvt && !isInstalled && <button className="btn-pc" onClick={() => installEvt.prompt()}>Install this app</button>}
+        {!isElectron && <a className="btn-line inline-block text-center" href="downloads/XeroxStation-Setup.exe" download>Download the Windows app (.exe, 64-bit)</a>}
         {!isElectron && <p className="text-sm text-ink-300">Keep this app open while receiving files. {isIOS ? 'iPhones pause apps in the background after about 30 seconds.' : 'The screen is kept awake while the app is open.'}</p>}
       </section>
 

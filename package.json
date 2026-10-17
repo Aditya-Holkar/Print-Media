@@ -47,7 +47,7 @@
     "productName": "XeroxStation",
     "directories": { "output": "release", "buildResources": "build" },
     "electronDist": "node_modules/electron/dist",
-    "files": ["dist/**", "electron/**", "package.json"],
+    "files": ["dist/**", "!dist/downloads/**", "electron/**", "package.json"],
     "asarUnpack": ["node_modules/pdf-to-printer/dist/**"],
     "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "build/icon.png" },
     "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }

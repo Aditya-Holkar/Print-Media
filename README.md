@@ -9,6 +9,7 @@ Print-shop station: a desktop app (Electron) plus a web/PWA version. Customers s
 
 - Web/PWA: https://print-media-eta.vercel.app
 - Customer upload page (internet mode): https://print-media-eta.vercel.app/customer.html
+- Windows installer (64-bit): https://print-media-eta.vercel.app/downloads/XeroxStation-Setup.exe
 - Remote console (link + QR + access code are generated in the desktop app: **Settings → Remote console**)
 
 ## Develop
