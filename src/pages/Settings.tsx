@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useStore } from '../lib/store';
 import { loadPrinters, startNet } from '../lib/controller';
 import { randCode, randToken } from '../lib/db';
 import { operatorSources } from '../lib/session';
 import { QRCodeSVG } from 'qrcode.react';
-import { caps, isAndroid, isElectron, isIOS, isInstalled, targetLabel } from '../lib/platform';
+import { caps, isAndroid, isElectron, isIOS, targetLabel } from '../lib/platform';
+import { usePwaInstall } from '../lib/pwa';
 import type { Settings as S } from '../lib/types';
 
 function Num({ label, v, on, min = 1 }: { label: string; v: number; on: (n: number) => void; min?: number }) {
@@ -18,15 +19,9 @@ export default function Settings() {
   const { settings, printers, patchSettings, lanIps, port } = useStore();
   const [d, setD] = useState<S>(settings);
   const [saved, setSaved] = useState(false);
-  const [installEvt, setInstallEvt] = useState<any>(null);
   const [opTab, setOpTab] = useState(0);
+  const inst = usePwaInstall();
   const up = (p: Partial<S>) => { setD({ ...d, ...p }); setSaved(false); };
-
-  useEffect(() => {
-    const h = (e: Event) => { e.preventDefault(); setInstallEvt(e); };
-    window.addEventListener('beforeinstallprompt', h);
-    return () => window.removeEventListener('beforeinstallprompt', h);
-  }, []);
 
   const save = async () => { await patchSettings(d); startNet(); setSaved(true); };
   const showPublic = !isElectron || d.connection === 'public';
@@ -156,10 +151,22 @@ export default function Settings() {
         <h2 className="text-xl font-bold">Security and alerts</h2>
         <Txt label="App PIN (leave empty for none)" v={d.appPin} on={(s) => up({ appPin: s.replace(/\D/g, '').slice(0, 8) })} type="password" />
         {'Notification' in window && <button className="btn-line" onClick={() => Notification.requestPermission()}>Allow notifications for new jobs</button>}
-        {installEvt && !isInstalled && <button className="btn-pc" onClick={() => installEvt.prompt()}>Install this app</button>}
-        {!isElectron && <a className="btn-line inline-block text-center" href="downloads/XeroxStation-Setup.exe" download>Download the Windows app (.exe, 64-bit)</a>}
-        {!isElectron && <p className="text-sm text-ink-300">Keep this app open while receiving files. {isIOS ? 'iPhones pause apps in the background after about 30 seconds.' : 'The screen is kept awake while the app is open.'}</p>}
       </section>
+
+      {!isElectron && (
+        <section className="panel space-y-3">
+          <h2 className="text-xl font-bold">Get the apps</h2>
+          {inst.installed ? (
+            <p className="font-bold text-py">Installed - open it from your home screen.</p>
+          ) : inst.canPrompt ? (
+            <button className="btn-pc w-full" onClick={() => void inst.prompt()}>Install this app</button>
+          ) : (
+            <p className="text-ink-300">{isIOS ? 'On iPhone: tap the Share button, then "Add to Home Screen".' : 'In the browser menu (or the address-bar icon) choose "Install app" or "Add to Home screen".'}</p>
+          )}
+          <a className="btn-line inline-block text-center" href="downloads/XeroxStation-Setup.exe" download>Download the Windows app (.exe, 64-bit)</a>
+          <p className="text-sm text-ink-300">Keep this app open while receiving files. {isIOS ? 'iPhones pause apps in the background after about 30 seconds.' : 'The screen is kept awake while the app is open.'}</p>
+        </section>
+      )}
 
       <div className="sticky bottom-20 md:bottom-4 flex items-center gap-3">
         <button className="btn-pc" onClick={save}>Save settings</button>

@@ -5,7 +5,8 @@ import Dashboard from './pages/Dashboard';
 import History from './pages/History';
 import Settings from './pages/Settings';
 import PinGate from './components/PinGate';
-import { isElectron, isInstalled } from './lib/platform';
+import { isElectron } from './lib/platform';
+import { usePwaInstall } from './lib/pwa';
 
 const NAV = [
   { id: 'dash', label: 'Queue', icon: LayoutDashboard },
@@ -29,20 +30,7 @@ export default function App() {
   const [page, setPage] = useState<(typeof NAV)[number]['id']>('dash');
   useWakeLock();
 
-  const [installEvt, setInstallEvt] = useState<any>(null);
-  const [gotInstalled, setGotInstalled] = useState(isInstalled);
-  const [hint, setHint] = useState(false);
-  useEffect(() => {
-    const onPrompt = (e: Event) => { e.preventDefault(); setInstallEvt(e); };
-    const onDone = () => { setGotInstalled(true); setInstallEvt(null); };
-    window.addEventListener('beforeinstallprompt', onPrompt);
-    window.addEventListener('appinstalled', onDone);
-    return () => { window.removeEventListener('beforeinstallprompt', onPrompt); window.removeEventListener('appinstalled', onDone); };
-  }, []);
-  const installApp = async () => {
-    if (installEvt) { installEvt.prompt(); try { await installEvt.userChoice; } catch { /* dismissed */ } setInstallEvt(null); }
-    else { setHint(true); window.setTimeout(() => setHint(false), 8000); }
-  };
+  const inst = usePwaInstall();
 
   if (!ready) return <div className="h-full grid place-items-center text-ink-300">Loading…</div>;
   if (locked) return <PinGate />;
@@ -61,15 +49,15 @@ export default function App() {
         {!isElectron && (
           <div className="mt-4 border-t border-ink-700 pt-3">
             <p className="px-4 pb-1 text-xs font-bold uppercase tracking-wider text-ink-500">Get the apps</p>
-            {!gotInstalled && (
-              <button onClick={() => void installApp()} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-lg font-bold text-ink-300 hover:bg-ink-800">
+            {!inst.installed && inst.canPrompt && (
+              <button onClick={() => void inst.prompt()} className="flex w-full items-center gap-3 rounded-xl px-4 py-3 text-lg font-bold text-ink-300 hover:bg-ink-800">
                 <Download size={22} /> Install app
               </button>
             )}
             <a href="downloads/XeroxStation-Setup.exe" download className="flex items-center gap-3 rounded-xl px-4 py-3 text-lg font-bold text-ink-300 hover:bg-ink-800">
               <MonitorDown size={22} /> Windows app (.exe)
             </a>
-            {hint && <p className="px-4 pt-1 text-xs text-ink-500">Use the browser menu → <b>Install app</b> or <b>Add to Home screen</b>.</p>}
+            {!inst.installed && !inst.canPrompt && <p className="px-4 pt-1 text-xs text-ink-500">In the browser menu (or the address-bar icon) choose <b>Install app</b> / <b>Add to Home screen</b>.</p>}
           </div>
         )}
       </aside>

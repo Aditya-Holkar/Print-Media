@@ -1,12 +1,32 @@
 import { useState } from 'react';
-import { QrCode, Plus, Store } from 'lucide-react';
+import { Plus, QrCode, Smartphone, Store, X } from 'lucide-react';
 import { useStore } from '../lib/store';
 import { newSession, dropSession } from '../lib/controller';
 import { customerSources } from '../lib/session';
-import { caps, isElectron } from '../lib/platform';
+import { caps, isElectron, isIOS } from '../lib/platform';
 import JobCard from '../components/JobCard';
 import QrPanel from '../components/QrPanel';
 import type { Job, Mode } from '../lib/types';
+import { usePwaInstall } from '../lib/pwa';
+
+/** Phone-sized "install the app" nudge. Hidden on desktop (the sidebar covers that) and once installed or dismissed. */
+function InstallBanner() {
+  const inst = usePwaInstall();
+  const [off, setOff] = useState(() => { try { return localStorage.getItem('xs-hideInstall') === '1'; } catch { return false; } });
+  if (isElectron || inst.installed || off) return null;
+  const close = () => { setOff(true); try { localStorage.setItem('xs-hideInstall', '1'); } catch { /* private mode */ } };
+  return (
+    <div className="panel !p-4 flex items-center gap-3 md:hidden">
+      <Smartphone className="shrink-0 text-pc" />
+      <div className="min-w-0 flex-1">
+        <p className="font-bold">Install this app</p>
+        <p className="text-sm text-ink-300">{inst.canPrompt ? 'Full screen, one tap to open - no browser bars.' : isIOS ? 'Tap Share, then "Add to Home Screen".' : 'In the browser menu tap "Install app" / "Add to Home screen".'}</p>
+      </div>
+      {inst.canPrompt && <button className="btn-pc !min-h-0 !py-2" onClick={() => void inst.prompt()}>Install</button>}
+      <button className="p-2 -m-2 text-ink-300 hover:text-white" onClick={close} aria-label="Dismiss"><X size={18} /></button>
+    </div>
+  );
+}
 
 const MODES: { id: Mode; label: string; hint: string }[] = [
   { id: 'manual', label: 'Manual', hint: 'Every file waits for your tap' },
@@ -41,6 +61,7 @@ export default function Dashboard() {
 
   return (
     <div className="p-4 md:p-6 space-y-5">
+      <InstallBanner />
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="text-2xl md:text-3xl font-extrabold mr-auto">{settings.shopName}</h1>
         <span className={`rounded-full px-3 py-1 text-sm font-bold ${bad.length === 0 ? 'bg-py text-ink-950' : 'bg-pm text-white'}`}>
