@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { QrCode, Plus, Store } from 'lucide-react';
 import { useStore } from '../lib/store';
 import { newSession, dropSession } from '../lib/controller';
-import { customerUrl } from '../lib/session';
-import { caps } from '../lib/platform';
+import { customerSources } from '../lib/session';
+import { caps, isElectron } from '../lib/platform';
 import JobCard from '../components/JobCard';
 import QrPanel from '../components/QrPanel';
 import type { Job, Mode } from '../lib/types';
@@ -22,7 +22,7 @@ const COLS: { id: string; label: string; color: string; match: (j: Job) => boole
 ];
 
 export default function Dashboard() {
-  const { settings, jobs, sessions, peerStatus, peerMsg, lanIps, port, patchSettings } = useStore();
+  const { settings, jobs, sessions, peerStatus, peerMsg, netStatus, netMsg, lanIps, port, patchSettings } = useStore();
   const [tab, setTab] = useState('in');
   const [wall, setWall] = useState(false);
   const [full, setFull] = useState(false);
@@ -30,17 +30,24 @@ export default function Dashboard() {
   const recentDone = (j: Job) => Date.now() - (j.printedAt ?? j.createdAt) < 24 * 3600_000;
 
   const add = () => { if (!newSession()) setFull(true); else setFull(false); };
-  const wallUrl = customerUrl(settings, settings.staticToken, lanIps, port);
+  const wallSrc = customerSources(settings, settings.staticToken, lanIps, port);
+  // Connection health: the shop WiFi peer (desktop app) and the internet peer each report separately.
+  const sides = [
+    ...(isElectron ? [{ label: 'Shop WiFi', st: peerStatus, msg: peerMsg }] : []),
+    ...(!isElectron || settings.connection === 'public' ? [{ label: 'Internet', st: netStatus, msg: netMsg }] : [])
+  ];
+  const bad = sides.filter((p) => p.st !== 'online');
+  const tip = (bad.find((p) => p.msg) || { msg: '' }).msg;
 
   return (
     <div className="p-4 md:p-6 space-y-5">
       <header className="flex flex-wrap items-center gap-3">
         <h1 className="text-2xl md:text-3xl font-extrabold mr-auto">{settings.shopName}</h1>
-        <span className={`rounded-full px-3 py-1 text-sm font-bold ${peerStatus === 'online' ? 'bg-py text-ink-950' : 'bg-pm text-white'}`}>
-          {peerStatus === 'online' ? 'Ready for customers' : peerStatus === 'connecting' ? 'Connecting…' : 'Offline'}
+        <span className={`rounded-full px-3 py-1 text-sm font-bold ${bad.length === 0 ? 'bg-py text-ink-950' : 'bg-pm text-white'}`}>
+          {bad.length === 0 ? 'Ready for customers' : bad.every((p) => p.st === 'connecting') ? 'Connecting…' : bad.map((p) => p.label).join(' + ') + ' offline'}
         </span>
       </header>
-      {peerStatus !== 'online' && peerMsg && <p className="text-pm">{peerMsg}</p>}
+      {bad.length > 0 && tip && <p className="text-pm">{tip}</p>}
 
       <div className="flex flex-wrap gap-3 items-center">
         <button className="btn-pc" onClick={add}><Plus /> New QR code</button>
@@ -60,7 +67,7 @@ export default function Dashboard() {
           {wall && (
             <div className="w-full max-w-[400px] space-y-3">
               {settings.staticEnabled ? (
-                <QrPanel title="Wall QR (reusable)" url={'url' in wallUrl ? wallUrl.url : undefined} error={'error' in wallUrl ? wallUrl.error : undefined} onClose={() => setWall(false)} />
+                <QrPanel title="Wall QR (reusable)" sources={wallSrc} onClose={() => setWall(false)} />
               ) : (
                 <div className="panel space-y-3">
                   <h3 className="text-xl font-bold">Wall QR</h3>
@@ -71,11 +78,10 @@ export default function Dashboard() {
               {settings.staticEnabled && <button className="btn-line w-full" onClick={() => { patchSettings({ staticEnabled: false }); setWall(false); }}>Turn off wall QR</button>}
             </div>
           )}
-          {live.map((s) => {
-            const u = customerUrl(settings, s.token, lanIps, port, s.expiresAt);
-            return <QrPanel key={s.token} title="Customer QR" expiresAt={s.expiresAt}
-              url={'url' in u ? u.url : undefined} error={'error' in u ? u.error : undefined} onClose={() => dropSession(s.token)} />;
-          })}
+          {live.map((s) => (
+            <QrPanel key={s.token} title="Customer QR" expiresAt={s.expiresAt}
+              sources={customerSources(settings, s.token, lanIps, port, s.expiresAt)} onClose={() => dropSession(s.token)} />
+          ))}
         </div>
       )}
 

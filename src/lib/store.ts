@@ -10,6 +10,8 @@ interface State {
   sessions: Session[];
   peerStatus: PeerStatus;
   peerMsg: string;
+  netStatus: PeerStatus;
+  netMsg: string;
   lanIps: string[];
   port: number;
   printers: PrinterInfo[];
@@ -31,6 +33,8 @@ export const useStore = create<State>((set, get) => ({
   sessions: [],
   peerStatus: 'connecting',
   peerMsg: '',
+  netStatus: 'connecting',
+  netMsg: '',
   lanIps: [],
   port: 0,
   printers: [],

@@ -2,15 +2,17 @@ import { PDFDocument } from 'pdf-lib';
 import { useStore } from './store';
 import { startShop, notifyCustomer } from './peer';
 import type { ShopHandlers } from './peer';
-import { delFile, getFile, LIVE_PUBLIC_URL, putFile, randCode, randPin, randToken, uid } from './db';
+import { DEFAULT_STUN, DEFAULT_TURN, DEFAULT_TURN_PASS, DEFAULT_TURN_USER, delFile, getFile, LIVE_PUBLIC_URL, OLD_STUN, putFile, randCode, randPin, randToken, uid } from './db';
 import { autoDecision } from './limits';
-import { ownerNet } from './session';
+import { ownerNets } from './session';
 import { printBytes, saveBytes } from './print';
 import { caps, isElectron } from './platform';
 import type { Job, Session } from './types';
 
 const S = () => useStore.getState();
-let shop: { destroy(): void; ops(m: unknown): void } | null = null;
+type ShopPeer = { destroy(): void; ops(m: unknown): void };
+let shopLan: ShopPeer | null = null;  // shop WiFi (desktop app only)
+let shopNet: ShopPeer | null = null;  // internet signaling
 let booted = false;
 
 async function sha256(bytes: ArrayBuffer): Promise<string> {
@@ -32,8 +34,8 @@ function beep() {
   } catch { /* autoplay blocked */ }
 }
 
-const handlers: ShopHandlers = {
-  status: (peerStatus, peerMsg = '') => S().set({ peerStatus, peerMsg }),
+type HandlerCore = Omit<ShopHandlers, 'status'>;
+const core: HandlerCore = {
   limits: () => ({ maxBytes: S().settings.maxMB > 0 ? S().settings.maxMB * 1048576 : 0, maxMB: S().settings.maxMB, shop: S().settings.shopName }),
 
   opCheck: (code) => { const s = S().settings; return s.opEnabled && code === s.opCode; },
@@ -79,6 +81,12 @@ const handlers: ShopHandlers = {
     return { ok: true, id: job.id };
   }
 };
+
+/** One set of handlers per peer: the shop WiFi peer and the internet peer report their status separately. */
+const handlersFor = (src: 'lan' | 'net'): ShopHandlers => ({
+  ...core,
+  status: (st, msg = '') => (src === 'lan' ? S().set({ peerStatus: st, peerMsg: msg }) : S().set({ netStatus: st, netMsg: msg }))
+});
 
 const find = (id: string) => S().jobs.find((j) => j.id === id);
 const update = (j: Job, p: Partial<Job>) => S().upsertJob({ ...j, ...p });
@@ -145,15 +153,13 @@ export function newSession(): Session | null {
 }
 export const dropSession = (token: string) => S().setSessions((l) => l.filter((x) => x.token !== token));
 
-/** (Re)connect the shop peer using current settings. */
+/** (Re)connect the shop peer(s) using current settings. Desktop app: always the shop-WiFi peer; "Shop WiFi + Internet" adds the internet peer. Hosted web app: internet peer only. */
 export function startNet() {
-  shop?.destroy();
+  shopLan?.destroy(); shopNet?.destroy(); shopLan = null; shopNet = null;
   const { settings, port } = S();
-  if (!isElectron && settings.connection === 'lan') {
-    S().set({ peerStatus: 'error', peerMsg: 'LAN mode needs the desktop app - open XeroxStation on the shop PC. This browser window can not run the shop WiFi QR server.' });
-    return;
-  }
-  shop = startShop(settings, handlers, ownerNet(settings, port));
+  const nets = ownerNets(settings, port);
+  if (nets.lan) shopLan = startShop(settings, handlersFor('lan'), nets.lan);
+  if (nets.net) shopNet = startShop(settings, handlersFor('net'), nets.net);
 }
 
 export async function loadPrinters() {
@@ -165,6 +171,13 @@ export async function boot() {
   await S().load();
   if (!S().settings.opCode) await S().patchSettings({ opCode: randCode() });
   if (!S().settings.publicUrl) await S().patchSettings({ publicUrl: LIVE_PUBLIC_URL });
+  if (!S().settings.iceV2) {
+    // One-time upgrade: recommended STUN/TURN lists for reliable internet connections, unless the shop already customised them.
+    const p: { iceV2: boolean; stun?: string; turnUrl?: string; turnUser?: string; turnPass?: string } = { iceV2: true };
+    if (!S().settings.stun || S().settings.stun === OLD_STUN) p.stun = DEFAULT_STUN;
+    if (!S().settings.turnUrl) { p.turnUrl = DEFAULT_TURN; p.turnUser = DEFAULT_TURN_USER; p.turnPass = DEFAULT_TURN_PASS; }
+    await S().patchSettings(p);
+  }
   if (isElectron && window.xs) { const i = await window.xs.info(); S().set({ lanIps: i.lanIps, port: i.port }); void loadPrinters(); }
   startNet();
   setInterval(() => S().setSessions((l) => l.filter((x) => x.used ? Date.now() < x.expiresAt + 60000 : x.expiresAt > Date.now())), 1000);
@@ -173,6 +186,6 @@ export async function boot() {
     document.title = n ? `(${n}) XeroxStation` : 'XeroxStation';
     window.xs?.badge(n);
     // Push the queue to logged-in remote consoles (web/PWA) whenever jobs change.
-    if (st.jobs !== lastJobs) { lastJobs = st.jobs; shop?.ops({ type: 'jobs', jobs: st.jobs.map(jobPub) }); }
+    if (st.jobs !== lastJobs) { lastJobs = st.jobs; const m = { type: 'jobs', jobs: st.jobs.map(jobPub) }; shopLan?.ops(m); shopNet?.ops(m); }
   });
 }

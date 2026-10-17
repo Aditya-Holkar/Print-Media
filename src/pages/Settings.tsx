@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../lib/store';
 import { loadPrinters, startNet } from '../lib/controller';
 import { randCode, randToken } from '../lib/db';
-import { operatorUrl } from '../lib/session';
+import { operatorSources } from '../lib/session';
 import { QRCodeSVG } from 'qrcode.react';
 import { caps, isAndroid, isElectron, isIOS, isInstalled, targetLabel } from '../lib/platform';
 import type { Settings as S } from '../lib/types';
@@ -19,6 +19,7 @@ export default function Settings() {
   const [d, setD] = useState<S>(settings);
   const [saved, setSaved] = useState(false);
   const [installEvt, setInstallEvt] = useState<any>(null);
+  const [opTab, setOpTab] = useState(0);
   const up = (p: Partial<S>) => { setD({ ...d, ...p }); setSaved(false); };
 
   useEffect(() => {
@@ -28,7 +29,7 @@ export default function Settings() {
   }, []);
 
   const save = async () => { await patchSettings(d); startNet(); setSaved(true); };
-  const lan = isElectron && d.connection === 'lan';
+  const showPublic = !isElectron || d.connection === 'public';
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-3xl">
@@ -81,23 +82,31 @@ export default function Settings() {
 
       <section className="panel space-y-4">
         <h2 className="text-xl font-bold">Connection</h2>
-        {isElectron && (
-          <div className="flex rounded-xl border border-ink-700 p-1 w-fit">
+        {isElectron ? (
+          <div className="flex flex-wrap gap-1 rounded-xl border border-ink-700 p-1 w-fit">
             {(['lan', 'public'] as const).map((c) => (
-              <button key={c} onClick={() => up({ connection: c })} className={`rounded-lg px-4 py-2 font-bold ${d.connection === c ? 'bg-ink-100 text-ink-950' : 'text-ink-300'}`}>{c === 'lan' ? 'Shop WiFi (no internet)' : 'Internet'}</button>
+              <button key={c} onClick={() => up({ connection: c })} className={`rounded-lg px-4 py-2 font-bold ${d.connection === c ? 'bg-ink-100 text-ink-950' : 'text-ink-300'}`}>{c === 'lan' ? 'Shop WiFi only' : 'Shop WiFi + Internet'}</button>
             ))}
           </div>
+        ) : (
+          <p className="text-ink-300">The hosted web app always uses the internet.</p>
         )}
-        {lan ? <Txt label="This PC's address (leave empty to detect)" v={d.lanIp} on={(s) => up({ lanIp: s.trim() })} ph="192.168.1.10" /> : (
+        <p className="text-ink-300">
+          {!isElectron || d.connection === 'lan'
+            ? 'Shop WiFi QR codes only - works without internet. Customers must be on the shop WiFi.'
+            : 'Both QR codes are offered: Shop WiFi (works even without internet) and Anywhere (internet). A remote customer scans the internet QR and does not need your WiFi at all.'}
+        </p>
+        {isElectron && <Txt label="This PC's address (leave empty to detect)" v={d.lanIp} on={(s) => up({ lanIp: s.trim() })} ph="192.168.1.10" />}
+        {showPublic && (
           <>
             <Txt label="Public page URL (folder where customer.html is hosted)" v={d.publicUrl} on={(s) => up({ publicUrl: s.trim() })} ph="https://print-media-eta.vercel.app" />
             <div className="grid grid-cols-2 gap-4">
               <Txt label="Signaling server" v={d.signaling.host} on={(s) => up({ signaling: { ...d.signaling, host: s.trim() } })} />
               <Num label="Port" v={d.signaling.port} on={(n) => up({ signaling: { ...d.signaling, port: n } })} />
             </div>
-            <Txt label="STUN server" v={d.stun} on={(s) => up({ stun: s })} />
+            <Txt label="STUN servers (comma separated)" v={d.stun} on={(s) => up({ stun: s })} />
             <div className="grid sm:grid-cols-3 gap-4">
-              <Txt label="TURN server (optional)" v={d.turnUrl} on={(s) => up({ turnUrl: s })} ph="turn:host:3478" />
+              <Txt label="TURN servers (optional, comma separated)" v={d.turnUrl} on={(s) => up({ turnUrl: s })} ph="turn:host:3478" />
               <Txt label="TURN user" v={d.turnUser} on={(s) => up({ turnUser: s })} />
               <Txt label="TURN password" v={d.turnPass} on={(s) => up({ turnPass: s })} type="password" />
             </div>
@@ -105,29 +114,41 @@ export default function Settings() {
         )}
       </section>
 
-      {lan && (
+      {isElectron && (
         <section className="panel space-y-4">
           <h2 className="text-xl font-bold">Remote console (web/PWA)</h2>
-          <p className="text-ink-300">Open your queue on a phone, tablet or another PC on the shop WiFi. It sees every job and can print, hold or reject - printing happens on this PC. No internet needed.</p>
+          <p className="text-ink-300">Open your queue on a phone, tablet or another PC. It sees every job and can print, hold or reject - printing happens on this PC. Shop WiFi needs no internet; the internet link works from anywhere.</p>
           <div className="flex flex-wrap gap-2">
             <button className={d.opEnabled ? 'btn-line' : 'btn-pc'} onClick={() => up({ opEnabled: !d.opEnabled })}>{d.opEnabled ? 'Turn off' : 'Turn on'}</button>
             {d.opEnabled && <button className="btn-line" onClick={() => up({ opCode: randCode() })}>New access code</button>}
           </div>
           {d.opEnabled && (() => {
-            const u = operatorUrl(d, lanIps, port);
-            if ('error' in u) return <p className="text-pm">{u.error}</p>;
+            const os = operatorSources(d, lanIps, port);
+            const i = Math.min(opTab, os.length - 1);
+            const o = os[i];
             return (
-              <div className="flex flex-wrap items-start gap-5">
-                <div className="rounded-xl bg-white p-3"><QRCodeSVG value={u.url} size={150} /></div>
-                <div className="space-y-2 min-w-[200px] flex-1">
-                  <p>Access code: <b className="text-2xl tracking-widest text-py">{d.opCode || '-'}</b></p>
-                  <button className="btn-line" onClick={() => void navigator.clipboard.writeText(u.url)}>Copy console link</button>
-                  <p className="text-sm text-ink-300 break-all">{u.url}</p>
-                </div>
+              <div className="space-y-3">
+                {os.length > 1 && (
+                  <div className="flex gap-1 rounded-xl border border-ink-700 p-1 w-fit" role="tablist">
+                    {os.map((x, n) => (
+                      <button key={x.label} onClick={() => setOpTab(n)} className={`rounded-lg px-3 py-1.5 text-sm font-bold ${n === i ? 'bg-ink-100 text-ink-950' : 'text-ink-300'}`}>{x.label}</button>
+                    ))}
+                  </div>
+                )}
+                {o.error ? <p className="text-pm">{o.error}</p> : (
+                  <div className="flex flex-wrap items-start gap-5">
+                    <div className="rounded-xl bg-white p-3"><QRCodeSVG value={o.url ?? ''} size={150} /></div>
+                    <div className="space-y-2 min-w-[200px] flex-1">
+                      <p>Access code: <b className="text-2xl tracking-widest text-py">{d.opCode || '-'}</b></p>
+                      <button className="btn-line" onClick={() => void navigator.clipboard.writeText(o.url ?? '')}>Copy console link</button>
+                      <p className="text-sm text-ink-300 break-all">{o.url}</p>
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })()}
-          <p className="text-sm text-ink-300">Scan the QR with the phone that should run the console, or open the link in any browser on the shop WiFi. Click Save settings to apply.</p>
+          <p className="text-sm text-ink-300">Scan the QR with the phone that should run the console - the internet tab also works without shop WiFi. Click Save settings to apply.</p>
         </section>
       )}
 

@@ -22,6 +22,14 @@ export const uid = () => (typeof crypto.randomUUID === 'function' ? crypto.rando
 /** Live hosted web/PWA (Vercel). Used for internet-mode customer links and the remote console. */
 export const LIVE_PUBLIC_URL = 'https://print-media-eta.vercel.app';
 
+/** Recommended ICE defaults - keep in sync with public/customer.html and public/operator.html. */
+export const DEFAULT_STUN = 'stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478,stun:stun.miwifi.com:3478';
+export const DEFAULT_TURN = 'turn:openrelay.metered.ca:80,turn:openrelay.metered.ca:443,turn:openrelay.metered.ca:443?transport=tcp';
+export const DEFAULT_TURN_USER = 'openrelayproject';
+export const DEFAULT_TURN_PASS = 'openrelayproject';
+/** Old single-STUN default shipped before the upgrade - replaced once by the migration in controller.boot(). */
+export const OLD_STUN = 'stun:stun.l.google.com:19302';
+
 export function defaultSettings(): Settings {
   return {
     shopName: 'My Xerox Shop',
@@ -34,7 +42,7 @@ export function defaultSettings(): Settings {
     connection: isElectron ? 'lan' : 'public',
     publicUrl: LIVE_PUBLIC_URL, lanIp: '',
     signaling: { host: '0.peerjs.com', port: 443, path: '/', secure: true },
-    stun: 'stun:stun.l.google.com:19302', turnUrl: '', turnUser: '', turnPass: '',
+    stun: DEFAULT_STUN, turnUrl: DEFAULT_TURN, turnUser: DEFAULT_TURN_USER, turnPass: DEFAULT_TURN_PASS,
     printer: '', appPin: '',
     opEnabled: true, opCode: ''
   };

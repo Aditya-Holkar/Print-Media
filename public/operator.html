@@ -75,6 +75,7 @@
   var q = new URLSearchParams(location.search);
   var P = q.get('p') || '', H = q.get('h') || '', O = +q.get('o') || 8787, A = q.get('a') || '/peerjs';
   var X = q.get('x') === '1', N = q.get('n') || 'Shop console', CODE = q.get('c') || '';
+  var LANP = q.get('l') === '1', U = q.get('u') || '', R = q.get('r') || '', RU = q.get('ru') || '', RP = q.get('rp') || '';
   var $ = function(id){ return document.getElementById(id); };
 
   // Remember the pairing for the rest of this browser session (survives refresh).
@@ -83,13 +84,14 @@
     if (saved) {
       P = P || saved.p || ''; H = H || saved.h || ''; O = saved.o || O; A = saved.a || A;
       X = X || !!saved.x; CODE = CODE || saved.c || '';
+      U = U || saved.u || ''; R = R || saved.r || ''; RU = RU || saved.ru || ''; RP = RP || saved.rp || '';
     }
   } catch(e){}
 
   $('shop').textContent = N;
   document.title = N;
 
-  function save() { try { sessionStorage.setItem('xs-op', JSON.stringify({ p:P, h:H, o:O, a:A, x:X, c:CODE })); } catch(e){} }
+  function save() { try { sessionStorage.setItem('xs-op', JSON.stringify({ p:P, h:H, o:O, a:A, x:X, c:CODE, u:U, r:R, ru:RU, rp:RP })); } catch(e){} }
   function setStatus(cls, msg) { $('sdot').className = 'dot ' + cls; $('smsg').textContent = msg; }
   function showLogin(msg){
     $('login').hidden = false; $('cin').hidden = $('cpr').hidden = $('cdn').hidden = true; $('logout').hidden = true;
@@ -101,6 +103,15 @@
   }
   function showBoard(){ $('login').hidden = true; $('cin').hidden = $('cpr').hidden = $('cdn').hidden = false; $('logout').hidden = false; }
 
+  // ICE servers for internet mode (defaults must stay in sync with db.ts DEFAULT_STUN / DEFAULT_TURN).
+  function iceBit(){
+    var ice = [];
+    function add(list, user, pass){ (list || '').split(',').forEach(function(u){ u = u.trim(); if(!u) return; ice.push(user ? { urls: u, username: user, credential: pass } : { urls: u }); }); }
+    add(U || 'stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478,stun:stun.miwifi.com:3478');
+    add(R || 'turn:openrelay.metered.ca:80,turn:openrelay.metered.ca:443,turn:openrelay.metered.ca:443?transport=tcp', RU || 'openrelayproject', RP || 'openrelayproject');
+    return ice;
+  }
+
   var peer = null, conn = null, jobs = [], timer = null;
 
   function schedule(){
@@ -110,9 +121,9 @@
 
   function connect(){
     if (!P || !H || !CODE){ showLogin(); setStatus('', 'Log in to connect.'); return; }
-    setStatus('warn', 'Connecting to ' + H + '…');
+    setStatus('warn', LANP ? 'Connecting to ' + H + '…' : 'Connecting to the shop…');
     try { peer && peer.destroy(); } catch(e){}
-    peer = new Peer({ host: H, port: O, path: A, secure: X, config: { iceServers: [] } });
+    peer = new Peer({ host: H, port: O, path: A, secure: X, config: { iceServers: iceBit() } });
     peer.on('open', function(){
       conn = peer.connect(P, { reliable: true });
       conn.on('open', function(){ conn.send({ type: 'op-auth', code: CODE }); });
@@ -121,7 +132,7 @@
     });
     peer.on('error', function(e){
       var t = (e && e.type) || 'error';
-      setStatus('err', t === 'peer-unavailable' ? 'Shop app is not open on ' + H + ' - waiting…' : 'Connection problem (' + t + ') - retrying…');
+      setStatus('err', t === 'peer-unavailable' ? (LANP ? 'Shop app is not open on ' + H + ' - waiting…' : 'The shop PC is not connected yet - waiting…') : 'Connection problem (' + t + ') - retrying…');
       schedule();
     });
     peer.on('disconnected', function(){ try { peer.reconnect(); } catch(e){ schedule(); } });

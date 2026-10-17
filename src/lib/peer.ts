@@ -35,7 +35,7 @@ export function startShop(s: Settings, h: ShopHandlers, net: Net): { destroy(): 
   // Human-readable reason for the connection problem (shown under the status pill).
   const why = (type: string) =>
     type === 'unavailable-id' ? 'Shop ID is busy - retrying (close other copies of the app)'
-      : type === 'network' ? (net.lan ? 'Lost the shop server - reconnecting…' : "Can't reach the internet signaling server. On a shop WiFi with no internet? Settings > Connection > Shop WiFi, and use the desktop app.")
+      : type === 'network' ? (net.lan ? 'Lost the shop server - reconnecting…' : "Can't reach the internet. Customers can still use the Shop WiFi QR - or switch Settings > Connection to Shop WiFi only.")
       : type === 'server-error' ? 'The signaling server is not answering - reconnecting…'
       : type === 'socket-error' || type === 'socket-closed' ? 'Connection dropped - reconnecting…'
       : 'Connection problem (' + (type || 'error') + ')';
@@ -54,9 +54,12 @@ export function startShop(s: Settings, h: ShopHandlers, net: Net): { destroy(): 
   const boot = () => {
     if (dead || peer) return;
     h.status('connecting');
-    const iceServers: RTCIceServer[] = net.lan ? [] : [
-      ...(s.stun ? [{ urls: s.stun }] : []),
-      ...(s.turnUrl ? [{ urls: s.turnUrl, username: s.turnUser, credential: s.turnPass }] : [])
+    // Comma-separated STUN/TURN lists. Used on the shop WiFi too: some routers block local
+    // peer discovery (mDNS), and real srflx/relay candidates make the connection work anyway.
+    const urlList = (v: string) => v.split(',').map((u) => u.trim()).filter(Boolean);
+    const iceServers: RTCIceServer[] = [
+      ...urlList(s.stun).map((urls) => ({ urls })),
+      ...urlList(s.turnUrl).map((urls) => ({ urls, username: s.turnUser, credential: s.turnPass }))
     ];
     peer = new Peer(s.peerId, { host: net.host, port: net.port, path: net.path, secure: net.secure, config: { iceServers } });
     peer.on('open', () => { isOpen = true; fails = 0; clearWatch(); h.status('online'); });

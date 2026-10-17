@@ -67,11 +67,22 @@
 
   function show(id){ ['connecting','pick','sending'].forEach(function(x){ $(x).hidden = x !== id; }); }
   function fail(msg){ show('connecting'); $('cmsg').className='err'; $('cmsg').textContent = msg; }
+  function reachMsg(){ return LAN ? 'Could not reach the shop. Check you are on the shop WiFi (if asked) and try again.' : 'Could not reach the shop. Check your internet connection and try again.'; }
 
   if(!PEER || !TOKEN || !HOST){ fail('This QR code is not valid. Ask the shop for a new one.'); return; }
   if(EXP && Date.now() > EXP){ fail('This QR code has expired. Ask the shop for a new one.'); return; }
 
-  var opts = { host: HOST, port: PORT, path: PATH, secure: SECURE, config: { iceServers: LAN ? [] : [{ urls: 'stun:stun.l.google.com:19302' }] } };
+  // ICE servers (the app only embeds custom ones; defaults must stay in sync with db.ts DEFAULT_STUN / DEFAULT_TURN).
+  var STUN = q.get('u') || 'stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478,stun:stun.miwifi.com:3478';
+  var TURN = q.get('r') || 'turn:openrelay.metered.ca:80,turn:openrelay.metered.ca:443,turn:openrelay.metered.ca:443?transport=tcp';
+  var TURN_U = q.get('ru') || 'openrelayproject', TURN_P = q.get('rp') || 'openrelayproject';
+  function iceList(list, user, pass){
+    var out = [];
+    list.split(',').forEach(function(u){ u = u.trim(); if(!u) return; out.push(user ? { urls: u, username: user, credential: pass } : { urls: u }); });
+    return out;
+  }
+  // Full list everywhere: on the shop WiFi the extra candidates also help when the router blocks local peer discovery.
+  var opts = { host: HOST, port: PORT, path: PATH, secure: SECURE, config: { iceServers: iceList(STUN).concat(iceList(TURN, TURN_U, TURN_P)) } };
   var peer = new Peer(opts);
   var spare = null;                     // first authenticated connection, carries the first PDF
   var queue = [], running = 0, CONC = 3;  // up to 3 PDFs upload at the same time
@@ -86,7 +97,7 @@
     return new Promise(function(resolve, reject){
       var conn = peer.connect(PEER, { reliable: true });
       var settled = false;
-      var t = setTimeout(function(){ settled = true; try{ conn.close(); }catch(e){} reject(new Error('no-answer')); }, 15000);
+      var t = setTimeout(function(){ settled = true; try{ conn.close(); }catch(e){} reject(new Error('no-answer')); }, 18000);
       function onMsg(m){
         if(!m || typeof m !== 'object') return;
         if(m.type === 'auth-ok'){
@@ -209,7 +220,7 @@
   });
 
   var probed = false;
-  var timer = setTimeout(function(){ if(!probed && !picked) fail('Could not reach the shop. Check you are on the shop WiFi (if asked) and try again.'); }, 20000);
+  var timer = setTimeout(function(){ if(!probed && !picked) fail(reachMsg()); }, 25000);
   peer.on('error', function(e){ if(!probed && !picked) fail('Connection problem (' + (e.type || 'error') + '). Please scan the QR again.'); });
   peer.on('disconnected', function(){ try{ peer.reconnect(); }catch(e){} });
   getConn().then(function(c){
@@ -218,7 +229,7 @@
   }, function(e){
     probed = true; clearTimeout(timer);
     var m = (e && e.message) || '';
-    if(m === 'no-answer') fail('Could not reach the shop. Check you are on the shop WiFi (if asked) and try again.');
+    if(m === 'no-answer') fail(reachMsg());
     else if(m === 'closed' || m === 'conn-error') fail('Connection to the shop failed. Please scan the QR again.');
     else if(m) fail(m);
     else fail('This QR code is no longer valid. Ask the shop for a new one.');

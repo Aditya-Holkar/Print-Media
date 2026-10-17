@@ -24,6 +24,6 @@ npm run electron:build # Windows installer -> release/
 
 ## Notes
 
+- Connection modes: **Shop WiFi only** serves the customer/console pages from the shop PC on port 8787 — nothing leaves the shop WiFi. **Shop WiFi + Internet** keeps that and adds an internet QR: any customer scans it from anywhere, no WiFi needed.
 - Internet mode uses the public PeerJS signaling server (0.peerjs.com); a custom signaling server can be set in Settings.
-- LAN mode serves the customer/console pages from the shop PC on port 8787 — nothing leaves the shop WiFi.
 - After printing, document copies are deleted from the shop PC automatically.

@@ -48,6 +48,7 @@ export interface Settings {
   appPin: string;
   opEnabled: boolean;   // allow the web/PWA remote console (paired with opCode over the shop WiFi)
   opCode: string;       // access code shown in Settings, embedded in the console QR/link
+  iceV2?: boolean;      // one-time upgrade flag: recommended STUN/TURN defaults applied
 }
 
 export interface Session {
