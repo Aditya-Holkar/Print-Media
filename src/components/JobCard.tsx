@@ -27,7 +27,7 @@ export default function JobCard({ job: j }: { job: Job }) {
       {j.status === 'rejected' && <p className="text-sm text-ink-300">Rejected</p>}
 
       {waiting && caps.silentPrint && (
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center rounded-xl border border-ink-700">
             <button className="p-3" onClick={() => setCopies(j.id, j.copies - 1)} aria-label="Fewer copies"><Minus size={18} /></button>
             <span className="w-10 text-center text-lg font-bold">{j.copies}</span>

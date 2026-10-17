@@ -35,7 +35,7 @@ export default function Dashboard() {
   return (
     <div className="p-4 md:p-6 space-y-5">
       <header className="flex flex-wrap items-center gap-3">
-        <h1 className="text-3xl font-extrabold mr-auto">{settings.shopName}</h1>
+        <h1 className="text-2xl md:text-3xl font-extrabold mr-auto">{settings.shopName}</h1>
         <span className={`rounded-full px-3 py-1 text-sm font-bold ${peerStatus === 'online' ? 'bg-py text-ink-950' : 'bg-pm text-white'}`}>
           {peerStatus === 'online' ? 'Ready for customers' : peerStatus === 'connecting' ? 'Connecting…' : 'Offline'}
         </span>

@@ -22,7 +22,7 @@ export default function QrPanel({ url, error, title, pin, expiresAt, used, onClo
       {error ? <p className="mt-3 text-py">{error}</p> : url && (
         <>
           <div className={`mt-4 rounded-xl bg-white p-3 ${used ? 'opacity-30' : ''}`}>
-            <QRCodeSVG value={url} size={320} level="M" style={{ width: '100%', height: 'auto', minWidth: 300 }} />
+            <QRCodeSVG value={url} size={320} level="M" style={{ width: '100%', height: 'auto' }} />
           </div>
           {used ? <p className="mt-3 text-lg font-bold text-py">File received</p> : (
             <div className="mt-3 flex items-end justify-between">

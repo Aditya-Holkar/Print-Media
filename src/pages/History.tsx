@@ -31,7 +31,7 @@ export default function History() {
       </div>
       <div className="overflow-x-auto rounded-2xl border border-ink-700">
         <table className="w-full text-left">
-          <thead className="bg-ink-800 text-ink-300 text-sm"><tr>{['Date', 'File', 'Pages', 'Status', 'How', ''].map((h, i) => <th key={i} className="px-4 py-3 font-normal">{h}</th>)}</tr></thead>
+          <thead className="bg-ink-800 text-ink-300 text-sm"><tr>{['Date', 'File', 'Pages', 'Status', 'How', ''].map((h, i) => <th key={i} className={'px-4 py-3 font-normal' + (h === 'How' ? ' hidden md:table-cell' : '')}>{h}</th>)}</tr></thead>
           <tbody>
             {rows.map((j) => (
               <tr key={j.id} className="border-t border-ink-700">
@@ -39,7 +39,7 @@ export default function History() {
                 <td className="px-4 py-3 break-all">{j.filename}</td>
                 <td className="px-4 py-3">{j.pages}</td>
                 <td className="px-4 py-3 font-bold">{j.status}</td>
-                <td className="px-4 py-3 text-ink-300">{j.auto ? 'Automatic' : 'Approved'}</td>
+                <td className="px-4 py-3 text-ink-300 hidden md:table-cell">{j.auto ? 'Automatic' : 'Approved'}</td>
                 <td className="px-4 py-3 text-right"><button className="btn-line !p-2" title="Remove this record" aria-label="Remove this record" onClick={() => { if (confirm('Remove this record from history?')) void removeJob(j.id); }}><Trash2 size={16} /></button></td>
               </tr>
             ))}
