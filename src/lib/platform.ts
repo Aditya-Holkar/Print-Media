@@ -2,6 +2,7 @@ export interface XsBridge {
   info(): Promise<{ lanIps: string[]; port: number }>;
   printers(): Promise<{ name: string; isDefault?: boolean }[]>;
   printerSetup(): Promise<{ ok: boolean; error?: string }>;
+  bluetoothSetup(): Promise<{ ok: boolean; error?: string }>;
   print(a: { bytes: ArrayBuffer; printer?: string; copies: number; color: boolean }): Promise<{ ok: boolean; error?: string }>;
   badge(n: number): void;
 }

@@ -38,6 +38,11 @@ export async function bridgePrinterSetup(): Promise<{ ok: boolean; error?: strin
   catch { return { ok: false, error: 'Could not open Windows printer settings - is the desktop app running?' }; }
 }
 
+export async function bridgeBluetoothSetup(): Promise<{ ok: boolean; error?: string }> {
+  try { return await jfetch('/api/bridge/bluetooth-setup', { method: 'POST' }, 3000); }
+  catch { return { ok: false, error: 'Could not open Windows Bluetooth settings - is the desktop app running?' }; }
+}
+
 function b64(u8: Uint8Array): string {
   let s = '';
   for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, Array.from(u8.subarray(i, i + 0x8000)));

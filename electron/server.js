@@ -78,6 +78,9 @@ function startServer({ staticDir, port, bridge }) {
       app.post('/api/bridge/printer-setup', localOnly, async (_req, res) => {
         try { res.json(await bridge.openPrinterSetup()); } catch (e) { res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
       });
+      app.post('/api/bridge/bluetooth-setup', localOnly, async (_req, res) => {
+        try { res.json(await bridge.openBluetoothSetup()); } catch (e) { res.status(500).json({ ok: false, error: String((e && e.message) || e) }); }
+      });
       app.post('/api/bridge/print', localOnly, async (req, res) => {
         try {
           const b = req.body || {};

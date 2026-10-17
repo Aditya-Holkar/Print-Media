@@ -6,7 +6,7 @@ import { operatorSources } from '../lib/session';
 import { QRCodeSVG } from 'qrcode.react';
 import { caps, isAndroid, isElectron, isIOS, isMobile, targetLabel } from '../lib/platform';
 import { printTestPage } from '../lib/print';
-import { bridgePing, bridgePrinterSetup } from '../lib/bridge';
+import { bridgeBluetoothSetup, bridgePing, bridgePrinterSetup } from '../lib/bridge';
 import { usePwaInstall } from '../lib/pwa';
 import type { Settings as S } from '../lib/types';
 
@@ -23,6 +23,7 @@ export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [opTab, setOpTab] = useState(0);
   const [psOpen, setPsOpen] = useState(false);
+  const [btOpen, setBtOpen] = useState(false);
   const [tp, setTp] = useState<{ busy: boolean; msg: string; ok: boolean }>({ busy: false, msg: '', ok: false });
   const inst = usePwaInstall();
   const [pSaved, setPSaved] = useState(false);
@@ -61,6 +62,12 @@ export default function Settings() {
     setPsOpen(true);
     const r = window.xs ? await window.xs.printerSetup() : await bridgePrinterSetup();
     if (!r.ok) { setPsOpen(false); setTp({ busy: false, ok: false, msg: r.error || 'Could not open Windows printer settings.' }); }
+  };
+  /** Windows "Bluetooth & devices" screen - pair a Bluetooth printer once; it then shows in the list above. */
+  const addBluetoothPrinter = async () => {
+    setBtOpen(true);
+    const r = window.xs ? await window.xs.bluetoothSetup() : await bridgeBluetoothSetup();
+    if (!r.ok) { setBtOpen(false); setTp({ busy: false, ok: false, msg: r.error || 'Could not open Windows Bluetooth settings.' }); }
   };
   const doTest = async () => {
     setTp({ busy: true, msg: '', ok: false });
@@ -114,21 +121,30 @@ export default function Settings() {
               </select>
               <button className="btn-line" onClick={() => void loadPrinters()}>Refresh</button>
               <button className="btn-line" onClick={() => void addPrinter()}>Add printer</button>
+              <button className="btn-line" onClick={() => void addBluetoothPrinter()}>Bluetooth printer</button>
               <button className="btn-pc" onClick={() => void savePrinter()}>Save</button>
               {pSaved && <span className="self-center font-bold text-py">Saved ✓</span>}
             </div>
-            {printers.length === 0 && <p className="text-pm">No printers found on this PC. Use <b>Add printer</b>, install your printer in Windows, then come back - the list updates automatically.</p>}
+            {printers.length === 0 && <p className="text-pm">No printers found on this PC. Use <b>Add printer</b> or <b>Bluetooth printer</b> to add one in Windows, then come back - the list updates automatically.</p>}
             {psOpen && <p className="text-sm text-ink-300">Windows printer settings opened. After adding a printer, it appears in the list above automatically (or press Refresh).</p>}
+            {btOpen && <p className="text-sm text-ink-300">Windows Bluetooth settings opened. Pair the printer there - Windows adds it as a printer, and it appears in the list above automatically (or press Refresh).</p>}
+            <p className="text-sm text-ink-300"><b>Bluetooth printer?</b> Pair it once with the <b>Bluetooth printer</b> button - it then prints like any printer in the list.</p>
           </div>
         ) : isIOS ? (
-          <p>Tap <b>Print</b> on a job, then choose <b>Print</b> in the share sheet (AirPrint). iPhones always ask before printing.</p>
+          <div className="space-y-2">
+            <p>Tap <b>Print</b> on a job, then choose <b>Print</b> in the share sheet (AirPrint). iPhones always ask before printing.</p>
+            <p className="text-ink-300"><b>Bluetooth printer?</b> Install your printer's app once (HP Smart, Canon PRINT, Epson iPrint…), then tap <b>Print</b> on a job and pick that app in the share sheet - it prints over Bluetooth.</p>
+          </div>
         ) : isAndroid ? (
-          <p>Tap <b>Print</b> on a job, then choose <b>Print</b> or your printer app in the share sheet. You can also tap <b>Download</b> and print from Files. Android always asks before printing.</p>
+          <div className="space-y-2">
+            <p>Tap <b>Print</b> on a job, then choose <b>Print</b> or your printer app in the share sheet. You can also tap <b>Download</b> and print from Files. Android always asks before printing.</p>
+            <p className="text-ink-300"><b>Bluetooth printer?</b> Install your printer's app once (HP Smart, Canon PRINT, Epson iPrint…), then tap <b>Print</b> on a job and pick that app in the share sheet - it prints over Bluetooth.</p>
+          </div>
         ) : (
           <div className="space-y-2">
             <p>The XeroxStation <b>desktop app</b> is not running on this PC, so this page opens the Windows print window for every job - pick any installed printer there.</p>
             <p className="text-ink-300">For a printer list inside this app and printing with no dialogs (exactly like the desktop app), keep the desktop app open on this PC - <a className="underline" href="downloads/XeroxStation-Setup.exe" download>get it here</a>.</p>
-            <p className="text-ink-300">To add a printer to Windows: <b>Settings &gt; Printers &amp; scanners &gt; Add device</b>.</p>
+            <p className="text-ink-300">To add a printer to Windows: <b>Settings &gt; Printers &amp; scanners &gt; Add device</b>. For Bluetooth printers: <b>Settings &gt; Bluetooth &amp; devices &gt; Add device</b>.</p>
           </div>
         )}
         <div className="flex flex-wrap items-center gap-3">

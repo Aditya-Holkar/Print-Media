@@ -67,6 +67,18 @@ async function openPrinterSetup() {
   } catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
 }
 
+// Open the Windows "Bluetooth & devices" screen so a Bluetooth printer can be paired once.
+// Windows installs the paired printer like any other, so it then prints through the normal
+// silent pipeline - all printer brands, no special support needed here.
+async function openBluetoothSetup() {
+  try {
+    if (process.platform === 'win32') await shell.openExternal('ms-settings:bluetooth');
+    else if (process.platform === 'darwin') await shell.openExternal('x-apple.systempreferences:com.apple.Bluetooth-Settings.extension');
+    else return { ok: false, error: 'Open your system Bluetooth settings to pair a printer.' };
+    return { ok: true };
+  } catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
+}
+
 async function printPdfBytes({ bytes, printer, copies, color }) {
   const file = path.join(os.tmpdir(), `xs-${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`);
   try {
@@ -85,6 +97,7 @@ async function printPdfBytes({ bytes, printer, copies, color }) {
 
 ipcMain.handle('xs:printers', () => listPrinters());
 ipcMain.handle('xs:printerSetup', () => openPrinterSetup());
+ipcMain.handle('xs:bluetoothSetup', () => openBluetoothSetup());
 ipcMain.handle('xs:print', (_e, args) => printPdfBytes(args));
 
 ipcMain.on('xs:badge', (_e, n) => {
@@ -94,7 +107,7 @@ ipcMain.on('xs:badge', (_e, n) => {
 
 app.whenReady().then(async () => {
   try {
-    serverInfo = await startServer({ staticDir: STATIC_DIR, port: 8787, bridge: { listPrinters, openPrinterSetup, printPdfBytes } });
+    serverInfo = await startServer({ staticDir: STATIC_DIR, port: 8787, bridge: { listPrinters, openPrinterSetup, openBluetoothSetup, printPdfBytes } });
   } catch (e) {
     serverInfo = { port: 0 };
     console.error('LAN server failed:', e);
