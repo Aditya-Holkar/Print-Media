@@ -29,7 +29,8 @@ export function startShop(s: Settings, h: ShopHandlers, net: Net): { destroy(): 
   const ops = new Set<DataConnection>();
   const sendOps = (m: unknown) => { for (const c of ops) safeSend(c, m); };
   let peer: Peer | null = null; let dead = false; let timer: number | undefined;
-  let watch: number | undefined; let isOpen = false; let fails = 0; let bootAt = 0;
+  let watch: number | undefined; let isOpen = false; let fails = 0; let bootAt = 0; let booting = false;
+  let fastTries = 0;
   let relay: RTCIceServer[] | null = null; // fresh relay credentials, fetched once per start
 
   const clearWatch = () => { if (watch !== undefined) { clearTimeout(watch); watch = undefined; } };
@@ -42,61 +43,96 @@ export function startShop(s: Settings, h: ShopHandlers, net: Net): { destroy(): 
       : type === 'socket-error' || type === 'socket-closed' ? 'Connection dropped - reconnecting…'
       : 'Connection problem (' + (type || 'error') + ')';
 
-  const retry = () => {
+  // Fast retries cover normal hand-offs: another copy of the app on this device holds the
+  // Shop ID for a moment while it closes, or a fresh socket is dropped before it registers.
+  // After a few quick tries the normal backoff takes over.
+  const FAST_TRIES = 4;
+  const retry = (fast = false) => {
     if (dead) return;
     clearTimeout(timer); clearWatch(); isOpen = false;
-    try { peer?.destroy(); } catch { /* ignore */ }
-    peer = null;
-    // Back off so a long outage does not hammer the server (3s, 6s, 12s, 24s, then 30s).
-    const wait = Math.min(30000, 3000 * Math.pow(2, fails));
-    fails = Math.min(fails + 1, 5);
+    const p = peer; peer = null;
+    try { p?.destroy(); } catch { /* ignore */ }
+    let wait: number;
+    if (fast && fastTries < FAST_TRIES) {
+      fastTries++;
+      wait = 1000 + fastTries * 500; // 1.5s, 2s, 2.5s, 3s
+    } else {
+      // Back off so a long outage does not hammer the server (3s, 6s, 12s, 24s, then 30s).
+      wait = Math.min(30000, 3000 * Math.pow(2, fails));
+      fails = Math.min(fails + 1, 5);
+    }
     timer = window.setTimeout(() => { void boot(); }, wait);
   };
 
   const boot = async () => {
-    if (dead || peer) return;
-    bootAt = Date.now();
-    h.status('connecting');
-    // Comma-separated STUN/TURN lists. Used on the shop WiFi too: some routers block local
-    // peer discovery (mDNS), and real srflx/relay candidates make the connection work anyway.
-    const urlList = (v: string) => v.split(',').map((u) => u.trim()).filter(Boolean);
-    // Fresh Cloudflare relay credentials unless the shop configured their own TURN server.
-    // Phones on strict mobile networks can only reach the shop through a relay.
-    if (relay === null) relay = s.turnUrl.trim() ? [] : await cloudflareTurn(s.publicUrl || location.origin);
-    if (dead || peer) return;
-    const iceServers: RTCIceServer[] = [
-      ...urlList(s.stun).map((urls) => ({ urls })),
-      ...(s.turnUser.trim() ? urlList(s.turnUrl).map((urls) => ({ urls, username: s.turnUser, credential: s.turnPass })) : []),
-      ...relay
-    ];
-    peer = new Peer(s.peerId, { host: net.host, port: net.port, path: net.path, secure: net.secure, config: { iceServers } });
-    peer.on('open', () => { isOpen = true; fails = 0; clearWatch(); h.status('online'); });
-    peer.on('connection', onConn);
-    peer.on('disconnected', () => {
-      isOpen = false;
-      h.status('offline');
-      try { peer?.reconnect(); } catch { retry(); return; }
-      // If the socket does not come back quickly, rebuild the peer from scratch.
-      clearWatch();
-      watch = window.setTimeout(() => { if (!dead && !isOpen) retry(); }, 4000);
-    });
-    peer.on('error', (e: any) => {
-      const type = String(e?.type ?? 'error');
-      h.status('error', why(type));
-      if (RETRY.has(type)) retry();
-    });
+    if (dead || peer || booting) return;
+    booting = true;
+    try {
+      bootAt = Date.now();
+      h.status('connecting');
+      // Comma-separated STUN/TURN lists. Used on the shop WiFi too: some routers block local
+      // peer discovery (mDNS), and real srflx/relay candidates make the connection work anyway.
+      const urlList = (v: string) => v.split(',').map((u) => u.trim()).filter(Boolean);
+      // Fresh Cloudflare relay credentials unless the shop configured their own TURN server.
+      // Phones on strict mobile networks can only reach the shop through a relay.
+      if (relay === null) relay = s.turnUrl.trim() ? [] : await cloudflareTurn(s.publicUrl || location.origin);
+      if (dead || peer) return;
+      const iceServers: RTCIceServer[] = [
+        ...urlList(s.stun).map((urls) => ({ urls })),
+        ...(s.turnUser.trim() ? urlList(s.turnUrl).map((urls) => ({ urls, username: s.turnUser, credential: s.turnPass })) : []),
+        ...relay
+      ];
+      const p = new Peer(s.peerId, { host: net.host, port: net.port, path: net.path, secure: net.secure, config: { iceServers } });
+      peer = p;
+      let opened = false;
+      p.on('open', () => {
+        if (p !== peer) return; // a retry already replaced this one
+        opened = true; isOpen = true; fails = 0; fastTries = 0;
+        clearWatch(); h.status('online');
+      });
+      p.on('connection', onConn);
+      p.on('disconnected', () => {
+        if (p !== peer) return; // stale socket from a previous attempt
+        isOpen = false;
+        if (!opened) {
+          // Dropped before the ID ever registered (e.g. another copy still holds it).
+          // Never reconnect() a socket that never opened - rebuild it quickly instead.
+          h.status('connecting');
+          retry(true);
+          return;
+        }
+        h.status('offline');
+        try { p.reconnect(); } catch { retry(true); return; }
+        // If the socket does not come back quickly, rebuild the peer from scratch.
+        clearWatch();
+        watch = window.setTimeout(() => { if (!dead && p === peer && !isOpen) retry(true); }, 4000);
+      });
+      p.on('close', () => {
+        // The peer was closed behind our back - rebuild unless this was a planned stop.
+        if (p !== peer || dead) return;
+        retry(true);
+      });
+      p.on('error', (e: any) => {
+        if (p !== peer) return; // stale socket's error - a retry is already scheduled
+        const type = String(e?.type ?? 'error');
+        h.status('error', why(type));
+        if (RETRY.has(type)) retry(true);
+      });
+    } finally {
+      booting = false;
+    }
   };
 
   // Devices freeze background pages and sleep. On the way back a peer that never
   // registered - or whose socket died while frozen - is rebuilt right away instead of
   // waiting for the slow retry to expire.
   const wake = () => {
-    if (dead || isOpen) return;
+    if (dead || isOpen || booting) return;
     if (peer && Date.now() - bootAt < 8000) return; // a fresh attempt is already running
-    fails = 0;
+    fails = 0; fastTries = 0;
     clearTimeout(timer); clearWatch();
-    try { peer?.destroy(); } catch { /* ignore */ }
-    peer = null;
+    const p = peer; peer = null;
+    try { p?.destroy(); } catch { /* ignore */ }
     timer = window.setTimeout(() => { void boot(); }, 300);
   };
   const onVis = () => { if (document.visibilityState === 'visible') wake(); };
@@ -166,7 +202,8 @@ export function startShop(s: Settings, h: ShopHandlers, net: Net): { destroy(): 
       dead = true; clearTimeout(timer); clearWatch();
       document.removeEventListener('visibilitychange', onVis);
       window.removeEventListener('online', wake);
-      try { peer?.destroy(); } catch { /* ignore */ }
+      const p = peer; peer = null;
+      try { p?.destroy(); } catch { /* ignore */ }
     },
     ops: sendOps
   };

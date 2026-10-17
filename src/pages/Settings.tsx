@@ -25,6 +25,7 @@ export default function Settings() {
   const [psOpen, setPsOpen] = useState(false);
   const [tp, setTp] = useState<{ busy: boolean; msg: string; ok: boolean }>({ busy: false, msg: '', ok: false });
   const inst = usePwaInstall();
+  const [pSaved, setPSaved] = useState(false);
   const up = (p: Partial<S>) => { setD({ ...d, ...p }); setSaved(false); };
 
   // Web/PWA on the shop PC: when the desktop app runs on this same machine, the printer
@@ -47,6 +48,13 @@ export default function Settings() {
   const canList = caps.printerList || bridgeOk;
 
   const save = async () => { await patchSettings(d); void startNet(); setSaved(true); };
+
+  /** Save just the printer choice right from its section - no need to scroll to Save settings. */
+  const savePrinter = async () => {
+    await patchSettings({ printer: d.printer });
+    setPSaved(true);
+    window.setTimeout(() => setPSaved(false), 3000);
+  };
 
   /** Windows "add printer" screen - desktop app on this PC, or through the local bridge from the web app. */
   const addPrinter = async () => {
@@ -106,6 +114,8 @@ export default function Settings() {
               </select>
               <button className="btn-line" onClick={() => void loadPrinters()}>Refresh</button>
               <button className="btn-line" onClick={() => void addPrinter()}>Add printer</button>
+              <button className="btn-pc" onClick={() => void savePrinter()}>Save</button>
+              {pSaved && <span className="self-center font-bold text-py">Saved ✓</span>}
             </div>
             {printers.length === 0 && <p className="text-pm">No printers found on this PC. Use <b>Add printer</b>, install your printer in Windows, then come back - the list updates automatically.</p>}
             {psOpen && <p className="text-sm text-ink-300">Windows printer settings opened. After adding a printer, it appears in the list above automatically (or press Refresh).</p>}

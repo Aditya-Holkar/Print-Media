@@ -29,10 +29,17 @@ let lastProbe = 0;
 
 const post = (t: string) => { try { chan?.postMessage({ t, id: me, seq: claimSeq }); } catch { /* channel closed */ } };
 
+// Small event ring (diagnostics): module-level so tests can read what happened and when.
+type Ev = { t: number; d: string };
+const events: Ev[] = [];
+export const ownerMark = (d: string) => { events.push({ t: Date.now(), d }); if (events.length > 500) events.shift(); };
+export const ownerLog = () => events.slice();
+
 if (chan) {
   chan.onmessage = (e: MessageEvent) => {
     const m = e.data as { t?: string; id?: string; seq?: number } | null;
     if (!m || typeof m.id !== 'string' || m.id === me) return;
+    ownerMark('recv:' + m.t + ' seq=' + m.seq + ' from=' + String(m.id).slice(0, 8) + ' hold=' + holding + ' claim=' + claiming);
     if (m.t === 'claim') {
       const newer = typeof m.seq === 'number' && (m.seq > claimSeq || (m.seq === claimSeq && m.id > me));
       if (!newer) return;
@@ -40,11 +47,13 @@ if (chan) {
       if (holding) {
         // a newer copy of the app is taking over: release the ID right away
         holding = false;
+        ownerMark('RELEASE (newer claim)');
         try { releaseHook?.(); } catch { /* ignore */ }
         post('released');
       } else if (claiming) {
         // we were still asking for the slot and a newer copy claimed it: bow out
         claiming = false;
+        ownerMark('LOSE claim');
         loseWait?.();
       }
     } else if (m.t === 'released') {
@@ -55,7 +64,7 @@ if (chan) {
     } else if (m.t === 'here') {
       hereWaker?.(); hereWaker = null;
     } else if (m.t === 'bye') {
-      if (!holding) freeHook?.();
+      if (!holding) { ownerMark('BYE -> free hook'); freeHook?.(); }
     }
   };
 }
@@ -87,7 +96,7 @@ export async function claimSlot(): Promise<boolean> {
   claiming = false;
   if (!res.won) { holding = false; return false; }
   // If an older holder released for us, its server socket needs a moment to close.
-  if (res.freed) await new Promise((r) => setTimeout(r, 300));
+  if (res.freed) await new Promise((r) => setTimeout(r, 900));
   holding = true;
   return true;
 }
@@ -96,7 +105,7 @@ export async function claimSlot(): Promise<boolean> {
 export function watchPresence() {
   if (!chan) return;
   const check = async () => {
-    if (holding || document.visibilityState !== 'visible') return;
+    if (holding || claiming) return;
     if (Date.now() - lastProbe < 7000) return;
     lastProbe = Date.now();
     const here = await new Promise<boolean>((resolve) => {
@@ -107,6 +116,12 @@ export function watchPresence() {
     });
     if (!here && !holding && !claiming) freeHook?.();
   };
+  // A released copy also checks on a slow timer: covers a holder that vanished without a
+  // "bye" (crashed tab, force-closed window, frozen phone) so the shop never sits offline.
+  setInterval(() => { void check(); }, 15000);
   document.addEventListener('visibilitychange', () => { void check(); });
   window.addEventListener('pagehide', () => { if (holding) { holding = false; post('bye'); } });
 }
+
+/** Diagnostics (tests): where this copy stands in the ownership of the slot. */
+export function ownerState() { return { me, holding, claiming, claimSeq, hasChannel: !!chan }; }

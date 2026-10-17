@@ -7,7 +7,7 @@ import { autoDecision } from './limits';
 import { ownerNets } from './session';
 import { printBytes, saveBytes } from './print';
 import { caps, isElectron } from './platform';
-import { claimSlot, holderRelease, onSlotFree, watchPresence } from './ownerlock';
+import { claimSlot, holderRelease, onSlotFree, ownerLog, ownerState, watchPresence } from './ownerlock';
 import { bridgePing, bridgePrinters } from './bridge';
 import type { Job, Session, Settings } from './types';
 
@@ -217,6 +217,8 @@ export async function boot() {
   // The copy that owned the slot went away: take over.
   onSlotFree(() => { void startNet(); });
   watchPresence();
+  // Support/diagnostics: read this copy's ownership state from the console or a test harness.
+  (window as unknown as Record<string, unknown>).__xsOwner = { state: ownerState, log: ownerLog };
   void startNet();
   setInterval(() => S().setSessions((l) => l.filter((x) => x.used ? Date.now() < x.expiresAt + 60000 : x.expiresAt > Date.now())), 1000);
   useStore.subscribe((st) => {
