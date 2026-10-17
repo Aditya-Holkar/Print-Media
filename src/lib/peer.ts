@@ -73,17 +73,27 @@ export function startShop(s: Settings, h: ShopHandlers, net: Net): { destroy(): 
       // Comma-separated STUN/TURN lists. Used on the shop WiFi too: some routers block local
       // peer discovery (mDNS), and real srflx/relay candidates make the connection work anyway.
       const urlList = (v: string) => v.split(',').map((u) => u.trim()).filter(Boolean);
-      // Fresh Cloudflare relay credentials unless the shop configured their own TURN server.
-      // Phones on strict mobile networks can only reach the shop through a relay.
-      if (relay === null) relay = s.turnUrl.trim() ? [] : await cloudflareTurn(s.publicUrl || location.origin);
-      if (dead || peer) return;
+      const ownTurn: RTCIceServer[] = s.turnUser.trim() ? urlList(s.turnUrl).map((urls) => ({ urls, username: s.turnUser, credential: s.turnPass })) : [];
       const iceServers: RTCIceServer[] = [
         ...urlList(s.stun).map((urls) => ({ urls })),
-        ...(s.turnUser.trim() ? urlList(s.turnUrl).map((urls) => ({ urls, username: s.turnUser, credential: s.turnPass })) : []),
-        ...relay
+        ...ownTurn,
+        ...(relay ?? [])
       ];
       const p = new Peer(s.peerId, { host: net.host, port: net.port, path: net.path, secure: net.secure, config: { iceServers } });
       peer = p;
+      // Fresh Cloudflare relay credentials unless the shop configured their own TURN server.
+      // Phones on strict mobile networks can only reach the shop through a relay. Fetched in
+      // the background so a slow lookup never holds up the shop going online - peerjs reads
+      // the config for every new connection, so the credentials apply as soon as they arrive.
+      if (relay === null) {
+        relay = [];
+        if (!ownTurn.length) {
+          void cloudflareTurn(s.publicUrl || location.origin).then((creds) => {
+            relay = creds;
+            if (creds.length && !dead && p === peer) p.options.config.iceServers = iceServers.concat(creds);
+          });
+        }
+      }
       let opened = false;
       p.on('open', () => {
         if (p !== peer) return; // a retry already replaced this one

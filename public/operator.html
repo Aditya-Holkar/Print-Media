@@ -132,11 +132,18 @@
 
   function connect(){
     if (!P || !H || !CODE){ showLogin(); setStatus('', 'Log in to connect.'); return; }
-    if (fetching) return;
     setStatus('warn', LANP ? 'Connecting to ' + H + '…' : 'Connecting to the shop…');
-    if (iceDyn) { startPeer(); return; }
-    fetching = true;
-    turnCreds().then(function(relay){ iceDyn = relay; fetching = false; startPeer(); });
+    // Connect right away - fresh relay credentials are fetched in the background. They are
+    // only needed for phones behind strict carrier NATs; a slow lookup must never delay the
+    // console (or block retries while it is still running).
+    if (!fetching && !iceDyn){
+      fetching = true;
+      turnCreds().then(function(relay){
+        iceDyn = relay; fetching = false;
+        try { if (relay.length && peer) peer.options.config.iceServers = iceBit().concat(relay); } catch(e){}
+      });
+    }
+    startPeer();
   }
 
   function startPeer(){

@@ -247,6 +247,7 @@
       else softFail(m || 'This QR code is no longer valid. Ask the shop for a new one.');
     });
   }
+  function baseCfg(){ return iceList(STUN).concat(TURN && TURN_U ? iceList(TURN, TURN_U, TURN_P) : []); }
   function start(){
     peer.on('error', function(e){
       var t = (e && e.type) || 'error';
@@ -256,10 +257,14 @@
     peer.on('disconnected', function(){ try{ peer.reconnect(); }catch(e){} });
     probe();
   }
+  // Start right away - fresh relay credentials are fetched in the background. They are only
+  // needed for phones behind strict carrier NATs, and peerjs reads the config for every new
+  // connection, so they apply to every attempt made after they arrive.
+  peer = new Peer({ host: HOST, port: PORT, path: PATH, secure: SECURE, config: { iceServers: baseCfg() } });
+  start();
   turnCreds().then(function(relay){
-    var cfg = iceList(STUN).concat(TURN && TURN_U ? iceList(TURN, TURN_U, TURN_P) : []).concat(relay);
-    peer = new Peer({ host: HOST, port: PORT, path: PATH, secure: SECURE, config: { iceServers: cfg } });
-    start();
+    if(!relay.length) return;
+    try { peer.options.config.iceServers = baseCfg().concat(relay); } catch(e){}
   });
 })();
 </script>

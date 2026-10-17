@@ -81,7 +81,8 @@ export function onSlotFree(fn: (() => void) | null) { freeHook = fn; }
  */
 export async function claimSlot(): Promise<boolean> {
   if (!chan) { holding = true; return true; }
-  await new Promise((r) => setTimeout(r, 60 + Math.floor(Math.random() * 160)));
+  if (holding) return true; // already ours - starting over must not redo the handshake
+  await new Promise((r) => setTimeout(r, 40 + Math.floor(Math.random() * 100)));
   claimSeq = Date.now();
   claiming = true;
   const res = await new Promise<{ won: boolean; freed: boolean }>((resolve) => {
@@ -90,7 +91,10 @@ export async function claimSlot(): Promise<boolean> {
     const waker = () => fin({ won: true, freed: true });
     claimWakers.push(waker);
     loseWait = () => fin({ won: false, freed: false });
-    setTimeout(() => fin({ won: true, freed: false }), 700);
+    // A live holder answers "released" in milliseconds. If nothing answers quickly, no other
+    // copy is on this device - take the slot without making the shop wait (retries recover
+    // if a busy copy surfaces later).
+    setTimeout(() => fin({ won: true, freed: false }), 350);
     post('claim');
   });
   claiming = false;
