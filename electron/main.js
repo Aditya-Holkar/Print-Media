@@ -47,25 +47,27 @@ function createTray() {
 
 ipcMain.handle('xs:info', () => ({ lanIps: lanIps(), port: serverInfo.port }));
 
-ipcMain.handle('xs:printers', async () => {
+// The printer helpers are shared with the local bridge (electron/server.js) so the hosted
+// web/PWA app on this PC gets the exact same printer list and silent printing as the app.
+async function listPrinters() {
   try {
     const { getPrinters, getDefaultPrinter } = require('pdf-to-printer');
     const [list, def] = await Promise.all([getPrinters(), getDefaultPrinter().catch(() => null)]);
     return list.map((p) => ({ name: p.name, isDefault: !!def && def.name === p.name }));
   } catch { return []; }
-});
+}
 
 // Open the Windows "add a printer" screen. The Settings page re-scans the list when the window is focused again.
-ipcMain.handle('xs:printerSetup', async () => {
+async function openPrinterSetup() {
   try {
     if (process.platform === 'win32') await shell.openExternal('ms-settings:printers');
     else if (process.platform === 'darwin') await shell.openExternal('x-apple.systempreferences:com.apple.Print-Scan-PrefPane');
     else return { ok: false, error: 'Open your system printer settings to add a printer.' };
     return { ok: true };
   } catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
-});
+}
 
-ipcMain.handle('xs:print', async (_e, { bytes, printer, copies, color }) => {
+async function printPdfBytes({ bytes, printer, copies, color }) {
   const file = path.join(os.tmpdir(), `xs-${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`);
   try {
     fs.writeFileSync(file, Buffer.from(bytes));
@@ -79,7 +81,11 @@ ipcMain.handle('xs:print', async (_e, { bytes, printer, copies, color }) => {
   } finally {
     setTimeout(() => fs.rm(file, { force: true }, () => {}), 30000);
   }
-});
+}
+
+ipcMain.handle('xs:printers', () => listPrinters());
+ipcMain.handle('xs:printerSetup', () => openPrinterSetup());
+ipcMain.handle('xs:print', (_e, args) => printPdfBytes(args));
 
 ipcMain.on('xs:badge', (_e, n) => {
   if (tray) tray.setToolTip(n > 0 ? `XeroxStation - ${n} waiting` : 'XeroxStation');
@@ -88,7 +94,7 @@ ipcMain.on('xs:badge', (_e, n) => {
 
 app.whenReady().then(async () => {
   try {
-    serverInfo = await startServer({ staticDir: STATIC_DIR, port: 8787 });
+    serverInfo = await startServer({ staticDir: STATIC_DIR, port: 8787, bridge: { listPrinters, openPrinterSetup, printPdfBytes } });
   } catch (e) {
     serverInfo = { port: 0 };
     console.error('LAN server failed:', e);

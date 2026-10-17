@@ -1,6 +1,5 @@
 import { openDB, IDBPDatabase } from 'idb';
 import type { Job, Settings } from './types';
-import { isElectron } from './platform';
 
 let dbp: Promise<IDBPDatabase> | null = null;
 const db = () =>
@@ -24,9 +23,9 @@ export const LIVE_PUBLIC_URL = 'https://print-media-eta.vercel.app';
 
 /** Recommended ICE defaults - keep in sync with public/customer.html and public/operator.html. */
 export const DEFAULT_STUN = 'stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478,stun:stun.miwifi.com:3478';
-export const DEFAULT_TURN = 'turn:openrelay.metered.ca:80,turn:openrelay.metered.ca:443,turn:openrelay.metered.ca:443?transport=tcp';
-export const DEFAULT_TURN_USER = 'openrelayproject';
-export const DEFAULT_TURN_PASS = 'openrelayproject';
+/** No built-in TURN server: every deployment serves fresh Cloudflare relay credentials at /api/turn. */
+export const DEFAULT_TURN = '';
+export const OLD_TURN = 'turn:openrelay.metered.ca:80,turn:openrelay.metered.ca:443,turn:openrelay.metered.ca:443?transport=tcp';
 /** Old single-STUN default shipped before the upgrade - replaced once by the migration in controller.boot(). */
 export const OLD_STUN = 'stun:stun.l.google.com:19302';
 
@@ -39,10 +38,10 @@ export function defaultSettings(): Settings {
     mode: 'manual',
     maxPages: 20, maxMB: 10, maxPerHour: 10, cooldownSec: 30, dailyPageCap: 200, rejectPages: 300,
     sessionTtlMin: 10, maxSessions: 5,
-    connection: isElectron ? 'lan' : 'public',
+    connection: 'public',
     publicUrl: LIVE_PUBLIC_URL, lanIp: '',
     signaling: { host: '0.peerjs.com', port: 443, path: '/', secure: true },
-    stun: DEFAULT_STUN, turnUrl: DEFAULT_TURN, turnUser: DEFAULT_TURN_USER, turnPass: DEFAULT_TURN_PASS,
+    stun: DEFAULT_STUN, turnUrl: DEFAULT_TURN, turnUser: '', turnPass: '',
     printer: '', appPin: '',
     opEnabled: true, opCode: ''
   };

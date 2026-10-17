@@ -67,29 +67,38 @@
 
   function show(id){ ['connecting','pick','sending'].forEach(function(x){ $(x).hidden = x !== id; }); }
   function fail(msg){ show('connecting'); $('cmsg').className='err'; $('cmsg').textContent = msg; }
-  function reachMsg(){ return LAN ? 'Could not reach the shop. Check you are on the shop WiFi (if asked) and try again.' : 'Could not reach the shop. Check your internet connection and try again.'; }
+  function reachMsg(){ return LAN ? 'Could not reach the shop. Check you are on the shop WiFi (if asked) and try again.' : 'Could not reach the shop yet. Check your internet connection and try again - or ask the shop staff to check the shop is online.'; }
 
   if(!PEER || !TOKEN || !HOST){ fail('This QR code is not valid. Ask the shop for a new one.'); return; }
   if(EXP && Date.now() > EXP){ fail('This QR code has expired. Ask the shop for a new one.'); return; }
 
-  // ICE servers (the app only embeds custom ones; defaults must stay in sync with db.ts DEFAULT_STUN / DEFAULT_TURN).
+  // ICE servers. The QR carries custom ones; otherwise STUN defaults plus fresh Cloudflare
+  // relay credentials minted by this deployment at /api/turn (phones on mobile networks
+  // can only reach the shop through a relay; the old free relays died in 2025).
   var STUN = q.get('u') || 'stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478,stun:stun.miwifi.com:3478';
-  var TURN = q.get('r') || 'turn:openrelay.metered.ca:80,turn:openrelay.metered.ca:443,turn:openrelay.metered.ca:443?transport=tcp';
-  var TURN_U = q.get('ru') || 'openrelayproject', TURN_P = q.get('rp') || 'openrelayproject';
+  var TURN = q.get('r') || '', TURN_U = q.get('ru') || '', TURN_P = q.get('rp') || '';
   function iceList(list, user, pass){
     var out = [];
-    list.split(',').forEach(function(u){ u = u.trim(); if(!u) return; out.push(user ? { urls: u, username: user, credential: pass } : { urls: u }); });
+    (list || '').split(',').forEach(function(u){ u = u.trim(); if(!u) return; out.push(user ? { urls: u, username: user, credential: pass } : { urls: u }); });
     return out;
   }
-  // Full list everywhere: on the shop WiFi the extra candidates also help when the router blocks local peer discovery.
-  var opts = { host: HOST, port: PORT, path: PATH, secure: SECURE, config: { iceServers: iceList(STUN).concat(iceList(TURN, TURN_U, TURN_P)) } };
-  var peer = new Peer(opts);
+  function turnCreds(){
+    return new Promise(function(resolve){
+      var t = setTimeout(function(){ resolve([]); }, 3500);
+      fetch(new URL('/api/turn', location.href).href, { cache: 'no-store' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
+        clearTimeout(t);
+        resolve(j && j.username && j.urls ? [{ urls: j.urls, username: j.username, credential: String(j.credential || '') }] : []);
+      }).catch(function(){ clearTimeout(t); resolve([]); });
+    });
+  }
+  var peer = null;
   var spare = null;                     // first authenticated connection, carries the first PDF
   var queue = [], running = 0, CONC = 3;  // up to 3 PDFs upload at the same time
-  var okN = 0, badN = 0, picked = false;
+  var okN = 0, badN = 0, picked = false, probed = false, attempts = 0;
 
   // One connection per PDF: files upload in parallel and never interleave.
-  function getConn(){
+  function getConn(waitMs){
+    if(!peer) return new Promise(function(res, rej){ setTimeout(function(){ getConn(waitMs).then(res, rej); }, 300); });
     if(spare){
       var s = spare; spare = null;
       if(s.conn && s.conn.open) return Promise.resolve(s);
@@ -97,7 +106,7 @@
     return new Promise(function(resolve, reject){
       var conn = peer.connect(PEER, { reliable: true });
       var settled = false;
-      var t = setTimeout(function(){ settled = true; try{ conn.close(); }catch(e){} reject(new Error('no-answer')); }, 18000);
+      var t = setTimeout(function(){ settled = true; try{ conn.close(); }catch(e){} reject(new Error('no-answer')); }, waitMs || 18000);
       function onMsg(m){
         if(!m || typeof m !== 'object') return;
         if(m.type === 'auth-ok'){
@@ -219,20 +228,38 @@
     pump();
   });
 
-  var probed = false;
-  var timer = setTimeout(function(){ if(!probed && !picked) fail(reachMsg()); }, 25000);
-  peer.on('error', function(e){ if(!probed && !picked) fail('Connection problem (' + (e.type || 'error') + '). Please scan the QR again.'); });
-  peer.on('disconnected', function(){ try{ peer.reconnect(); }catch(e){} });
-  getConn().then(function(c){
-    probed = true; clearTimeout(timer);
-    spare = c; show('pick');
-  }, function(e){
-    probed = true; clearTimeout(timer);
-    var m = (e && e.message) || '';
-    if(m === 'no-answer') fail(reachMsg());
-    else if(m === 'closed' || m === 'conn-error') fail('Connection to the shop failed. Please scan the QR again.');
-    else if(m) fail(m);
-    else fail('This QR code is no longer valid. Ask the shop for a new one.');
+  // Keep trying instead of blaming the customer's internet on the first hiccup: the shop
+  // may still be waking up, and a zombie copy on the shop side answers with silence once.
+  var SHOP_OFF = 'The shop is not connected right now. Please show this screen to the shop staff - this page keeps trying.';
+  function softFail(msg){
+    if(probed || picked) return;
+    attempts++;
+    if(attempts >= 3){ fail(msg); return; }
+    $('cmsg').className = ''; $('cmsg').textContent = 'Still connecting to the shop\u2026';
+    setTimeout(probe, 5000);
+  }
+  function probe(){
+    if(probed || picked) return;
+    getConn(10000).then(function(c){ probed = true; spare = c; show('pick'); }, function(e){
+      var m = (e && e.message) || '';
+      if(m === 'no-answer') softFail(reachMsg());
+      else if(m === 'closed' || m === 'conn-error') softFail('Connection to the shop failed. Please scan the QR again.');
+      else softFail(m || 'This QR code is no longer valid. Ask the shop for a new one.');
+    });
+  }
+  function start(){
+    peer.on('error', function(e){
+      var t = (e && e.type) || 'error';
+      if(t === 'peer-unavailable') softFail(SHOP_OFF);
+      else softFail('Connection problem (' + t + '). Please scan the QR again.');
+    });
+    peer.on('disconnected', function(){ try{ peer.reconnect(); }catch(e){} });
+    probe();
+  }
+  turnCreds().then(function(relay){
+    var cfg = iceList(STUN).concat(TURN && TURN_U ? iceList(TURN, TURN_U, TURN_P) : []).concat(relay);
+    peer = new Peer({ host: HOST, port: PORT, path: PATH, secure: SECURE, config: { iceServers: cfg } });
+    start();
   });
 })();
 </script>

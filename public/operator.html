@@ -103,27 +103,45 @@
   }
   function showBoard(){ $('login').hidden = true; $('cin').hidden = $('cpr').hidden = $('cdn').hidden = false; $('logout').hidden = false; }
 
-  // ICE servers for internet mode (defaults must stay in sync with db.ts DEFAULT_STUN / DEFAULT_TURN).
+  // ICE servers (custom ones come from the console link; the default relay credentials
+  // are fetched fresh from this deployment at /api/turn).
   function iceBit(){
     var ice = [];
     function add(list, user, pass){ (list || '').split(',').forEach(function(u){ u = u.trim(); if(!u) return; ice.push(user ? { urls: u, username: user, credential: pass } : { urls: u }); }); }
     add(U || 'stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478,stun:stun.miwifi.com:3478');
-    add(R || 'turn:openrelay.metered.ca:80,turn:openrelay.metered.ca:443,turn:openrelay.metered.ca:443?transport=tcp', RU || 'openrelayproject', RP || 'openrelayproject');
+    if (R && RU) add(R, RU, RP);
     return ice;
   }
 
-  var peer = null, conn = null, jobs = [], timer = null;
+  var peer = null, conn = null, jobs = [], timer = null, iceDyn = null, fetching = false;
 
   function schedule(){
     if (timer) clearTimeout(timer);
     timer = setTimeout(connect, 3000);
   }
 
+  function turnCreds(){
+    return new Promise(function(resolve){
+      var t = setTimeout(function(){ resolve([]); }, 3500);
+      fetch(new URL('/api/turn', location.href).href, { cache: 'no-store' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(j){
+        clearTimeout(t);
+        resolve(j && j.username && j.urls ? [{ urls: j.urls, username: j.username, credential: String(j.credential || '') }] : []);
+      }).catch(function(){ clearTimeout(t); resolve([]); });
+    });
+  }
+
   function connect(){
     if (!P || !H || !CODE){ showLogin(); setStatus('', 'Log in to connect.'); return; }
+    if (fetching) return;
     setStatus('warn', LANP ? 'Connecting to ' + H + '…' : 'Connecting to the shop…');
+    if (iceDyn) { startPeer(); return; }
+    fetching = true;
+    turnCreds().then(function(relay){ iceDyn = relay; fetching = false; startPeer(); });
+  }
+
+  function startPeer(){
     try { peer && peer.destroy(); } catch(e){}
-    peer = new Peer({ host: H, port: O, path: A, secure: X, config: { iceServers: iceBit() } });
+    peer = new Peer({ host: H, port: O, path: A, secure: X, config: { iceServers: iceBit().concat(iceDyn || []) } });
     peer.on('open', function(){
       conn = peer.connect(P, { reliable: true });
       conn.on('open', function(){ conn.send({ type: 'op-auth', code: CODE }); });

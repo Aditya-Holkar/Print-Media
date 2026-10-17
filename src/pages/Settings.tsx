@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useStore } from '../lib/store';
 import { loadPrinters, startNet } from '../lib/controller';
 import { randCode, randToken } from '../lib/db';
@@ -6,6 +6,7 @@ import { operatorSources } from '../lib/session';
 import { QRCodeSVG } from 'qrcode.react';
 import { caps, isAndroid, isElectron, isIOS, isMobile, targetLabel } from '../lib/platform';
 import { printTestPage } from '../lib/print';
+import { bridgePing, bridgePrinterSetup } from '../lib/bridge';
 import { usePwaInstall } from '../lib/pwa';
 import type { Settings as S } from '../lib/types';
 
@@ -26,13 +27,31 @@ export default function Settings() {
   const inst = usePwaInstall();
   const up = (p: Partial<S>) => { setD({ ...d, ...p }); setSaved(false); };
 
-  const save = async () => { await patchSettings(d); startNet(); setSaved(true); };
+  // Web/PWA on the shop PC: when the desktop app runs on this same machine, the printer
+  // section is exactly the desktop app's - same list, same silent printing.
+  const [bridgeOk, setBridgeOk] = useState(false);
+  useEffect(() => {
+    if (caps.printerList) { setBridgeOk(true); return; }
+    let live = true;
+    const check = async (force = false) => {
+      const ok = await bridgePing(force);
+      if (!live) return;
+      setBridgeOk(ok);
+      if (ok) void loadPrinters();
+    };
+    void check(true);
+    const f = () => { void check(); };
+    window.addEventListener('focus', f);
+    return () => { live = false; window.removeEventListener('focus', f); };
+  }, []);
+  const canList = caps.printerList || bridgeOk;
 
-  /** Desktop app: open the Windows "add printer" screen; the list re-scans when the window is focused again. */
+  const save = async () => { await patchSettings(d); void startNet(); setSaved(true); };
+
+  /** Windows "add printer" screen - desktop app on this PC, or through the local bridge from the web app. */
   const addPrinter = async () => {
-    if (!window.xs) return;
     setPsOpen(true);
-    const r = await window.xs.printerSetup();
+    const r = window.xs ? await window.xs.printerSetup() : await bridgePrinterSetup();
     if (!r.ok) { setPsOpen(false); setTp({ busy: false, ok: false, msg: r.error || 'Could not open Windows printer settings.' }); }
   };
   const doTest = async () => {
@@ -77,7 +96,7 @@ export default function Settings() {
 
       <section className="panel space-y-4">
         <h2 className="text-xl font-bold">Printer</h2>
-        {caps.printerList ? (
+        {canList ? (
           <div className="space-y-2">
             <label className="label">Printer used for every job</label>
             <div className="flex flex-wrap gap-2">
@@ -97,9 +116,9 @@ export default function Settings() {
           <p>Tap <b>Print</b> on a job, then choose <b>Print</b> or your printer app in the share sheet. You can also tap <b>Download</b> and print from Files. Android always asks before printing.</p>
         ) : (
           <div className="space-y-2">
-            <p>The browser app cannot read this PC's printer list, so every job opens the Windows print window - pick any installed printer there. Print quality depends on the printer driver; use <b>Download</b> if margins look wrong.</p>
-            <p className="text-ink-300">To add a printer, use Windows: <b>Settings &gt; Printers &amp; scanners &gt; Add device</b>. It then appears in the print window.</p>
-            <p className="text-ink-300">For a printer list inside this app and printing without any dialog, use the <b>desktop app</b> - <a className="underline" href="downloads/XeroxStation-Setup.exe" download>download it here</a>.</p>
+            <p>The XeroxStation <b>desktop app</b> is not running on this PC, so this page opens the Windows print window for every job - pick any installed printer there.</p>
+            <p className="text-ink-300">For a printer list inside this app and printing with no dialogs (exactly like the desktop app), keep the desktop app open on this PC - <a className="underline" href="downloads/XeroxStation-Setup.exe" download>get it here</a>.</p>
+            <p className="text-ink-300">To add a printer to Windows: <b>Settings &gt; Printers &amp; scanners &gt; Add device</b>.</p>
           </div>
         )}
         <div className="flex flex-wrap items-center gap-3">
@@ -107,7 +126,7 @@ export default function Settings() {
           {tp.msg && <span className={tp.ok ? 'font-bold text-py' : 'text-pm'}>{tp.msg}</span>}
         </div>
         <p className="text-sm text-ink-300">
-          {caps.printerList ? 'Jobs print one by one with no dialog, to the printer chosen here.' : isMobile ? 'The test page opens the same share sheet a job uses.' : 'The test page opens the same print window a job uses.'}
+          {canList ? 'Jobs print one by one with no dialog, to the printer chosen here.' : isMobile ? 'The test page opens the same share sheet a job uses.' : 'The test page opens the same print window a job uses.'}
         </p>
       </section>
 
@@ -125,9 +144,9 @@ export default function Settings() {
         <p className="text-ink-300">
           {!isElectron || d.connection === 'lan'
             ? 'Shop WiFi QR codes only - works without internet. Customers must be on the shop WiFi.'
-            : 'Both QR codes are offered: Shop WiFi (works even without internet) and Anywhere (internet). A remote customer scans the internet QR and does not need your WiFi at all.'}
+            : 'Internet QR codes only - they open the live page and work from anywhere. Choose "Shop WiFi only" if you want local QR codes that work without internet.'}
         </p>
-        {isElectron && <Txt label="This PC's address (leave empty to detect)" v={d.lanIp} on={(s) => up({ lanIp: s.trim() })} ph="192.168.1.10" />}
+        {isElectron && d.connection === 'lan' && <Txt label="This PC's address (leave empty to detect)" v={d.lanIp} on={(s) => up({ lanIp: s.trim() })} ph="192.168.1.10" />}
         {showPublic && (
           <>
             <Txt label="Public page URL (folder where customer.html is hosted)" v={d.publicUrl} on={(s) => up({ publicUrl: s.trim() })} ph="https://print-media-eta.vercel.app" />
@@ -179,7 +198,7 @@ export default function Settings() {
               </div>
             );
           })()}
-          <p className="text-sm text-ink-300">Scan the QR with the phone that should run the console - the internet tab also works without shop WiFi. Click Save settings to apply.</p>
+          <p className="text-sm text-ink-300">Scan the QR with the phone that should run the console. Click Save settings to apply.</p>
         </section>
       )}
 

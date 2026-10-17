@@ -1,5 +1,6 @@
 import type { Job, Settings } from './types';
 import { isElectron, isMobile } from './platform';
+import { bridgePing, bridgePrint } from './bridge';
 
 export interface PrintResult { ok: boolean; confirm?: boolean; error?: string }
 
@@ -7,6 +8,12 @@ export async function printBytes(bytes: ArrayBuffer, job: Pick<Job, 'filename' |
   // Desktop app: silent print through SumatraPDF (bundled by pdf-to-printer)
   if (isElectron && window.xs) {
     const r = await window.xs.print({ bytes, printer: s.printer || undefined, copies: job.copies, color: job.color });
+    return r.ok ? { ok: true } : { ok: false, error: r.error || 'Printer error' };
+  }
+  // Web/PWA running on the same PC as the desktop app: print through it - same silent
+  // printing and the same printer list as the desktop app itself.
+  if (!isMobile && (await bridgePing())) {
+    const r = await bridgePrint(bytes, { printer: s.printer || undefined, copies: job.copies, color: job.color, filename: job.filename });
     return r.ok ? { ok: true } : { ok: false, error: r.error || 'Printer error' };
   }
   const file = new File([bytes], job.filename.replace(/[^\w.\- ]+/g, '_'), { type: 'application/pdf' });

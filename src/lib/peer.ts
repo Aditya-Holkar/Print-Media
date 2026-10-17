@@ -1,6 +1,7 @@
 import Peer, { DataConnection } from 'peerjs';
 import type { PeerStatus, Settings } from './types';
 import type { Net } from './session';
+import { cloudflareTurn } from './turn';
 
 export interface IncomingFile { token: string; kind: 'once' | 'static'; pin: string; remote: string; name: string; bytes: ArrayBuffer }
 export interface ShopHandlers {
@@ -28,14 +29,15 @@ export function startShop(s: Settings, h: ShopHandlers, net: Net): { destroy(): 
   const ops = new Set<DataConnection>();
   const sendOps = (m: unknown) => { for (const c of ops) safeSend(c, m); };
   let peer: Peer | null = null; let dead = false; let timer: number | undefined;
-  let watch: number | undefined; let isOpen = false; let fails = 0;
+  let watch: number | undefined; let isOpen = false; let fails = 0; let bootAt = 0;
+  let relay: RTCIceServer[] | null = null; // fresh relay credentials, fetched once per start
 
   const clearWatch = () => { if (watch !== undefined) { clearTimeout(watch); watch = undefined; } };
 
   // Human-readable reason for the connection problem (shown under the status pill).
   const why = (type: string) =>
-    type === 'unavailable-id' ? 'Shop ID is busy - retrying (close other copies of the app)'
-      : type === 'network' ? (net.lan ? 'Lost the shop server - reconnecting…' : "Can't reach the internet. Customers can still use the Shop WiFi QR - or switch Settings > Connection to Shop WiFi only.")
+    type === 'unavailable-id' ? 'The Shop ID is taken by another copy of the app on this device - it reconnects by itself when that copy closes.'
+      : type === 'network' ? (net.lan ? 'Lost the shop server - reconnecting…' : "Can't reach the internet - retrying by itself. Shop WiFi QR codes keep working.")
       : type === 'server-error' ? 'The signaling server is not answering - reconnecting…'
       : type === 'socket-error' || type === 'socket-closed' ? 'Connection dropped - reconnecting…'
       : 'Connection problem (' + (type || 'error') + ')';
@@ -48,18 +50,24 @@ export function startShop(s: Settings, h: ShopHandlers, net: Net): { destroy(): 
     // Back off so a long outage does not hammer the server (3s, 6s, 12s, 24s, then 30s).
     const wait = Math.min(30000, 3000 * Math.pow(2, fails));
     fails = Math.min(fails + 1, 5);
-    timer = window.setTimeout(boot, wait);
+    timer = window.setTimeout(() => { void boot(); }, wait);
   };
 
-  const boot = () => {
+  const boot = async () => {
     if (dead || peer) return;
+    bootAt = Date.now();
     h.status('connecting');
     // Comma-separated STUN/TURN lists. Used on the shop WiFi too: some routers block local
     // peer discovery (mDNS), and real srflx/relay candidates make the connection work anyway.
     const urlList = (v: string) => v.split(',').map((u) => u.trim()).filter(Boolean);
+    // Fresh Cloudflare relay credentials unless the shop configured their own TURN server.
+    // Phones on strict mobile networks can only reach the shop through a relay.
+    if (relay === null) relay = s.turnUrl.trim() ? [] : await cloudflareTurn(s.publicUrl || location.origin);
+    if (dead || peer) return;
     const iceServers: RTCIceServer[] = [
       ...urlList(s.stun).map((urls) => ({ urls })),
-      ...urlList(s.turnUrl).map((urls) => ({ urls, username: s.turnUser, credential: s.turnPass }))
+      ...(s.turnUser.trim() ? urlList(s.turnUrl).map((urls) => ({ urls, username: s.turnUser, credential: s.turnPass })) : []),
+      ...relay
     ];
     peer = new Peer(s.peerId, { host: net.host, port: net.port, path: net.path, secure: net.secure, config: { iceServers } });
     peer.on('open', () => { isOpen = true; fails = 0; clearWatch(); h.status('online'); });
@@ -78,6 +86,22 @@ export function startShop(s: Settings, h: ShopHandlers, net: Net): { destroy(): 
       if (RETRY.has(type)) retry();
     });
   };
+
+  // Devices freeze background pages and sleep. On the way back a peer that never
+  // registered - or whose socket died while frozen - is rebuilt right away instead of
+  // waiting for the slow retry to expire.
+  const wake = () => {
+    if (dead || isOpen) return;
+    if (peer && Date.now() - bootAt < 8000) return; // a fresh attempt is already running
+    fails = 0;
+    clearTimeout(timer); clearWatch();
+    try { peer?.destroy(); } catch { /* ignore */ }
+    peer = null;
+    timer = window.setTimeout(() => { void boot(); }, 300);
+  };
+  const onVis = () => { if (document.visibilityState === 'visible') wake(); };
+  document.addEventListener('visibilitychange', onVis);
+  window.addEventListener('online', wake);
 
   const onConn = (conn: DataConnection) => {
     let authed = false; let isOp = false; let token = ''; let kind: 'once' | 'static' = 'once'; let pin = '';
@@ -136,9 +160,14 @@ export function startShop(s: Settings, h: ShopHandlers, net: Net): { destroy(): 
     });
   };
 
-  boot();
+  void boot();
   return {
-    destroy() { dead = true; clearTimeout(timer); clearWatch(); try { peer?.destroy(); } catch { /* ignore */ } },
+    destroy() {
+      dead = true; clearTimeout(timer); clearWatch();
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('online', wake);
+      try { peer?.destroy(); } catch { /* ignore */ }
+    },
     ops: sendOps
   };
 }

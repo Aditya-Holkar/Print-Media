@@ -50,7 +50,7 @@ export function customerSources(s: Settings, token: string, lanIps: string[], lo
       out.push({ label: 'Anywhere (internet)', url: `${pb.base}/customer.html?${q.toString()}` });
     } else out.push({ label: 'Anywhere (internet)', error: pb.error });
   }
-  if (isElectron) {
+  if (isElectron && s.connection === 'lan') {
     const ip = s.lanIp || lanIps[0];
     if (!ip) out.push({ label: 'Shop WiFi', error: 'No network address found. Connect this PC to the shop WiFi / router.' });
     else {
@@ -76,7 +76,7 @@ export function operatorSources(s: Settings, lanIps: string[], localPort: number
     return `${base}/operator.html?${q.toString()}`;
   };
   const out: QrSource[] = [];
-  if (isElectron) {
+  if (isElectron && s.connection === 'lan') {
     const ip = s.lanIp || lanIps[0];
     if (!ip) out.push({ label: 'Shop WiFi', error: 'No network address found. Connect this PC to the shop WiFi / router.' });
     else out.push({ label: 'Shop WiFi', url: link(`http://${ip}:${localPort}`, ip, localPort, '/peerjs', false, true) });

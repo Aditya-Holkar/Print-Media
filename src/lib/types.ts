@@ -49,6 +49,7 @@ export interface Settings {
   opEnabled: boolean;   // allow the web/PWA remote console (paired with opCode over the shop WiFi)
   opCode: string;       // access code shown in Settings, embedded in the console QR/link
   iceV2?: boolean;      // one-time upgrade flag: recommended STUN/TURN defaults applied
+  pubV1?: boolean;      // one-time upgrade flag: live (Vercel) links everywhere + internet mode default
 }
 
 export interface Session {

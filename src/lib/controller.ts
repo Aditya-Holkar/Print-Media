@@ -2,12 +2,17 @@ import { PDFDocument } from 'pdf-lib';
 import { useStore } from './store';
 import { startShop, notifyCustomer } from './peer';
 import type { ShopHandlers } from './peer';
-import { DEFAULT_STUN, DEFAULT_TURN, DEFAULT_TURN_PASS, DEFAULT_TURN_USER, delFile, getFile, LIVE_PUBLIC_URL, OLD_STUN, putFile, randCode, randPin, randToken, uid } from './db';
+import { DEFAULT_STUN, delFile, getFile, LIVE_PUBLIC_URL, OLD_TURN, OLD_STUN, putFile, randCode, randPin, randToken, uid } from './db';
 import { autoDecision } from './limits';
 import { ownerNets } from './session';
 import { printBytes, saveBytes } from './print';
 import { caps, isElectron } from './platform';
-import type { Job, Session } from './types';
+import { claimSlot, holderRelease, onSlotFree, watchPresence } from './ownerlock';
+import { bridgePing, bridgePrinters } from './bridge';
+import type { Job, Session, Settings } from './types';
+
+/** Shown when another copy of the app on this device owns the shop connection. */
+export const RELEASE_MSG = 'Another copy of the app on this device is handling the shop - close it (or reload this page) to take over.';
 
 const S = () => useStore.getState();
 type ShopPeer = { destroy(): void; ops(m: unknown): void };
@@ -154,8 +159,13 @@ export function newSession(): Session | null {
 export const dropSession = (token: string) => S().setSessions((l) => l.filter((x) => x.token !== token));
 
 /** (Re)connect the shop peer(s) using current settings. Desktop app: always the shop-WiFi peer; "Shop WiFi + Internet" adds the internet peer. Hosted web app: internet peer only. */
-export function startNet() {
+export async function startNet() {
   shopLan?.destroy(); shopNet?.destroy(); shopLan = null; shopNet = null;
+  // One device, one station: only the newest copy of the app keeps the Shop ID online.
+  if (!(await claimSlot())) {
+    S().set({ peerStatus: 'offline', peerMsg: RELEASE_MSG, netStatus: 'offline', netMsg: RELEASE_MSG });
+    return;
+  }
   const { settings, port } = S();
   const nets = ownerNets(settings, port);
   if (nets.lan) shopLan = startShop(settings, handlersFor('lan'), nets.lan);
@@ -163,8 +173,11 @@ export function startNet() {
 }
 
 export async function loadPrinters() {
-  if (!caps.printerList || !window.xs) return;
-  try { S().set({ printers: await window.xs.printers() }); } catch { /* keep the last known list */ }
+  try {
+    if (caps.printerList && window.xs) { S().set({ printers: await window.xs.printers() }); return; }
+    // Hosted web/PWA on a PC that also runs the desktop app: same list through the local bridge.
+    if (await bridgePing()) S().set({ printers: await bridgePrinters() });
+  } catch { /* keep the last known list */ }
 }
 
 export async function boot() {
@@ -173,18 +186,38 @@ export async function boot() {
   if (!S().settings.opCode) await S().patchSettings({ opCode: randCode() });
   if (!S().settings.publicUrl) await S().patchSettings({ publicUrl: LIVE_PUBLIC_URL });
   if (!S().settings.iceV2) {
-    // One-time upgrade: recommended STUN/TURN lists for reliable internet connections, unless the shop already customised them.
-    const p: { iceV2: boolean; stun?: string; turnUrl?: string; turnUser?: string; turnPass?: string } = { iceV2: true };
+    // One-time upgrade: recommended STUN list for reliable internet connections, unless the shop already customised it.
+    const p: { iceV2: boolean; stun?: string } = { iceV2: true };
     if (!S().settings.stun || S().settings.stun === OLD_STUN) p.stun = DEFAULT_STUN;
-    if (!S().settings.turnUrl) { p.turnUrl = DEFAULT_TURN; p.turnUser = DEFAULT_TURN_USER; p.turnPass = DEFAULT_TURN_PASS; }
+    await S().patchSettings(p);
+  }
+  // The free relays shipped before 2026 are dead. Reliable relay credentials are fetched
+  // fresh from Cloudflare at connect time, so old installs drop the dead list once.
+  const tu = S().settings.turnUrl;
+  if (tu === OLD_TURN || /^turn:(staticauth\.)?openrelay\.metered\.ca/.test(tu)) {
+    await S().patchSettings({ turnUrl: '', turnUser: '', turnPass: '' });
+  }
+  // 2026: the live (Vercel) links are the default everywhere - one-time switch for old installs.
+  if (!S().settings.pubV1) {
+    const p: Partial<Settings> = { pubV1: true };
+    if (isElectron) p.connection = 'public';
     await S().patchSettings(p);
   }
   if (isElectron && window.xs) {
-    const i = await window.xs.info(); S().set({ lanIps: i.lanIps, port: i.port }); void loadPrinters();
-    // Back from Windows printer settings ("Add printer") - re-scan so a newly added printer shows up.
-    window.addEventListener('focus', () => { void loadPrinters(); });
+    const i = await window.xs.info(); S().set({ lanIps: i.lanIps, port: i.port });
   }
-  startNet();
+  void loadPrinters();
+  // Back from Windows printer settings ("Add printer") - re-scan so a newly added printer shows up.
+  window.addEventListener('focus', () => { void loadPrinters(); });
+  // Another copy of the app started handling the shop on this device: stand down.
+  holderRelease(() => {
+    shopLan?.destroy(); shopNet?.destroy(); shopLan = null; shopNet = null;
+    S().set({ peerStatus: 'offline', peerMsg: RELEASE_MSG, netStatus: 'offline', netMsg: RELEASE_MSG });
+  });
+  // The copy that owned the slot went away: take over.
+  onSlotFree(() => { void startNet(); });
+  watchPresence();
+  void startNet();
   setInterval(() => S().setSessions((l) => l.filter((x) => x.used ? Date.now() < x.expiresAt + 60000 : x.expiresAt > Date.now())), 1000);
   useStore.subscribe((st) => {
     const n = st.jobs.filter((j) => j.status === 'incoming' || j.status === 'held').length;
