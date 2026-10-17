@@ -55,6 +55,16 @@ ipcMain.handle('xs:printers', async () => {
   } catch { return []; }
 });
 
+// Open the Windows "add a printer" screen. The Settings page re-scans the list when the window is focused again.
+ipcMain.handle('xs:printerSetup', async () => {
+  try {
+    if (process.platform === 'win32') await shell.openExternal('ms-settings:printers');
+    else if (process.platform === 'darwin') await shell.openExternal('x-apple.systempreferences:com.apple.Print-Scan-PrefPane');
+    else return { ok: false, error: 'Open your system printer settings to add a printer.' };
+    return { ok: true };
+  } catch (err) { return { ok: false, error: String((err && err.message) || err) }; }
+});
+
 ipcMain.handle('xs:print', async (_e, { bytes, printer, copies, color }) => {
   const file = path.join(os.tmpdir(), `xs-${Date.now()}-${Math.random().toString(36).slice(2)}.pdf`);
   try {

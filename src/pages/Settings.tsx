@@ -4,7 +4,8 @@ import { loadPrinters, startNet } from '../lib/controller';
 import { randCode, randToken } from '../lib/db';
 import { operatorSources } from '../lib/session';
 import { QRCodeSVG } from 'qrcode.react';
-import { caps, isAndroid, isElectron, isIOS, targetLabel } from '../lib/platform';
+import { caps, isAndroid, isElectron, isIOS, isMobile, targetLabel } from '../lib/platform';
+import { printTestPage } from '../lib/print';
 import { usePwaInstall } from '../lib/pwa';
 import type { Settings as S } from '../lib/types';
 
@@ -20,10 +21,31 @@ export default function Settings() {
   const [d, setD] = useState<S>(settings);
   const [saved, setSaved] = useState(false);
   const [opTab, setOpTab] = useState(0);
+  const [psOpen, setPsOpen] = useState(false);
+  const [tp, setTp] = useState<{ busy: boolean; msg: string; ok: boolean }>({ busy: false, msg: '', ok: false });
   const inst = usePwaInstall();
   const up = (p: Partial<S>) => { setD({ ...d, ...p }); setSaved(false); };
 
   const save = async () => { await patchSettings(d); startNet(); setSaved(true); };
+
+  /** Desktop app: open the Windows "add printer" screen; the list re-scans when the window is focused again. */
+  const addPrinter = async () => {
+    if (!window.xs) return;
+    setPsOpen(true);
+    const r = await window.xs.printerSetup();
+    if (!r.ok) { setPsOpen(false); setTp({ busy: false, ok: false, msg: r.error || 'Could not open Windows printer settings.' }); }
+  };
+  const doTest = async () => {
+    setTp({ busy: true, msg: '', ok: false });
+    try {
+      const r = await printTestPage(d);
+      setTp(r.ok
+        ? { busy: false, ok: true, msg: r.confirm ? (isMobile ? 'Share sheet opened - pick Print.' : 'Print window opened - pick your printer.') : 'Test page sent to the printer.' }
+        : { busy: false, ok: false, msg: r.error || 'Could not print the test page.' });
+    } catch (e: any) {
+      setTp({ busy: false, ok: false, msg: String((e && e.message) || e) });
+    }
+  };
   const showPublic = !isElectron || d.connection === 'public';
 
   return (
@@ -56,23 +78,37 @@ export default function Settings() {
       <section className="panel space-y-4">
         <h2 className="text-xl font-bold">Printer</h2>
         {caps.printerList ? (
-          <div>
-            <label className="label">Printer</label>
-            <div className="flex gap-2">
+          <div className="space-y-2">
+            <label className="label">Printer used for every job</label>
+            <div className="flex flex-wrap gap-2">
               <select className="field" value={d.printer} onChange={(e) => up({ printer: e.target.value })}>
                 <option value="">Windows default printer</option>
                 {printers.map((p) => <option key={p.name} value={p.name}>{p.name}{p.isDefault ? ' (default)' : ''}</option>)}
               </select>
-              <button className="btn-line" onClick={() => loadPrinters()}>Refresh</button>
+              <button className="btn-line" onClick={() => void loadPrinters()}>Refresh</button>
+              <button className="btn-line" onClick={() => void addPrinter()}>Add printer</button>
             </div>
+            {printers.length === 0 && <p className="text-pm">No printers found on this PC. Use <b>Add printer</b>, install your printer in Windows, then come back - the list updates automatically.</p>}
+            {psOpen && <p className="text-sm text-ink-300">Windows printer settings opened. After adding a printer, it appears in the list above automatically (or press Refresh).</p>}
           </div>
         ) : isIOS ? (
           <p>Tap <b>Print</b> on a job, then choose <b>Print</b> in the share sheet (AirPrint). iPhones always ask before printing.</p>
         ) : isAndroid ? (
           <p>Tap <b>Print</b> on a job, then choose <b>Print</b> or your printer app in the share sheet. You can also tap <b>Download</b> and print from Files. Android always asks before printing.</p>
         ) : (
-          <p>The browser print window opens for each job. Print quality depends on your printer driver - use <b>Download</b> if margins look wrong. The desktop app prints without any dialog.</p>
+          <div className="space-y-2">
+            <p>The browser app cannot read this PC's printer list, so every job opens the Windows print window - pick any installed printer there. Print quality depends on the printer driver; use <b>Download</b> if margins look wrong.</p>
+            <p className="text-ink-300">To add a printer, use Windows: <b>Settings &gt; Printers &amp; scanners &gt; Add device</b>. It then appears in the print window.</p>
+            <p className="text-ink-300">For a printer list inside this app and printing without any dialog, use the <b>desktop app</b> - <a className="underline" href="downloads/XeroxStation-Setup.exe" download>download it here</a>.</p>
+          </div>
         )}
+        <div className="flex flex-wrap items-center gap-3">
+          <button className="btn-line" disabled={tp.busy} onClick={() => void doTest()}>{tp.busy ? 'Sending…' : 'Test print page'}</button>
+          {tp.msg && <span className={tp.ok ? 'font-bold text-py' : 'text-pm'}>{tp.msg}</span>}
+        </div>
+        <p className="text-sm text-ink-300">
+          {caps.printerList ? 'Jobs print one by one with no dialog, to the printer chosen here.' : isMobile ? 'The test page opens the same share sheet a job uses.' : 'The test page opens the same print window a job uses.'}
+        </p>
       </section>
 
       <section className="panel space-y-4">

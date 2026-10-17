@@ -163,7 +163,8 @@ export function startNet() {
 }
 
 export async function loadPrinters() {
-  if (caps.printerList && window.xs) S().set({ printers: await window.xs.printers() });
+  if (!caps.printerList || !window.xs) return;
+  try { S().set({ printers: await window.xs.printers() }); } catch { /* keep the last known list */ }
 }
 
 export async function boot() {
@@ -178,7 +179,11 @@ export async function boot() {
     if (!S().settings.turnUrl) { p.turnUrl = DEFAULT_TURN; p.turnUser = DEFAULT_TURN_USER; p.turnPass = DEFAULT_TURN_PASS; }
     await S().patchSettings(p);
   }
-  if (isElectron && window.xs) { const i = await window.xs.info(); S().set({ lanIps: i.lanIps, port: i.port }); void loadPrinters(); }
+  if (isElectron && window.xs) {
+    const i = await window.xs.info(); S().set({ lanIps: i.lanIps, port: i.port }); void loadPrinters();
+    // Back from Windows printer settings ("Add printer") - re-scan so a newly added printer shows up.
+    window.addEventListener('focus', () => { void loadPrinters(); });
+  }
   startNet();
   setInterval(() => S().setSessions((l) => l.filter((x) => x.used ? Date.now() < x.expiresAt + 60000 : x.expiresAt > Date.now())), 1000);
   useStore.subscribe((st) => {
