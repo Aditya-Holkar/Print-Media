@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Send a PDF to print</title>
+<style>
+  :root{--ink:#0b1220;--panel:#18243d;--line:#25344f;--text:#eef2fa;--mute:#9fb0cf;--c:#00aeef;--m:#ec008c;--y:#ffd400}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:var(--ink);color:var(--text);font:17px/1.45 ui-rounded,system-ui,"Segoe UI",Roboto,sans-serif;display:grid;place-items:center;padding:20px}
+  main{width:100%;max-width:440px}
+  .bar{height:6px;border-radius:3px;background:linear-gradient(90deg,var(--c) 33%,var(--m) 33% 66%,var(--y) 66%);margin-bottom:22px}
+  h1{font-size:26px;margin:0 0 4px}
+  p{margin:6px 0;color:var(--mute)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-top:18px}
+  .btn{display:block;width:100%;padding:16px;border-radius:12px;border:0;background:var(--c);color:#00121c;font:inherit;font-weight:700;text-align:center;cursor:pointer}
+  .btn:focus-visible{outline:3px solid var(--y);outline-offset:2px}
+  input[type=file]{display:none}
+  .meter{height:10px;border-radius:5px;background:var(--line);overflow:hidden;margin:14px 0 6px}
+  .meter i{display:block;height:100%;width:0;background:var(--c);transition:width .15s}
+  .pin{font-size:44px;font-weight:800;letter-spacing:.15em;color:var(--y);text-align:center;margin:8px 0}
+  .frow{margin:14px 0}
+  .frow p{margin:2px 0}
+  .fname{color:var(--text);font-weight:600;overflow-wrap:anywhere}
+  .fstat{font-size:14px}
+  .frow .meter{margin:8px 0 4px}
+  .err{color:#ff8fb8}.ok{color:#7ee0a6}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <div class="bar"></div>
+  <h1 id="shop">Print shop</h1>
+  <p>Send a PDF straight to the shop. No app, no account.</p>
+
+  <div class="card" id="connecting"><p id="cmsg">Connecting to the shop…</p></div>
+
+  <div class="card" id="pick" hidden>
+    <label class="btn" for="file">Choose PDFs</label>
+    <input id="file" type="file" accept="application/pdf,.pdf" multiple>
+    <p id="limit"></p>
+    <p id="perr" class="err"></p>
+  </div>
+
+  <div class="card" id="sending" hidden>
+    <div id="flist"></div>
+    <p id="summary"></p>
+    <label class="btn" for="file" id="morebtn" hidden>Send more PDFs</label>
+  </div>
+</main>
+
+<script src="peerjs.min.js"></script>
+<script>
+(function(){
+  var q = new URLSearchParams(location.search);
+  var PEER = q.get('p'), TOKEN = q.get('t');
+  var HOST = q.get('h'), PORT = +q.get('o') || 443, PATH = q.get('a') || '/', SECURE = q.get('x') !== '0';
+  var LAN = q.get('l') === '1', SHOP = q.get('n') || 'Print shop';
+  var MAXMB = q.has('m') ? Math.max(0, +q.get('m') || 0) : 10, EXP = +q.get('e') || 0; // m: 0 = no size limit; e = expiry (unix ms)
+  var $ = function(id){ return document.getElementById(id); };
+  function setLimit(){ $('limit').textContent = MAXMB > 0 ? 'PDF only, up to ' + MAXMB + ' MB each.' : 'PDF only, any size.'; }
+  $('shop').textContent = SHOP;
+  document.title = SHOP + ' - send a PDF';
+  setLimit();
+
+  function show(id){ ['connecting','pick','sending'].forEach(function(x){ $(x).hidden = x !== id; }); }
+  function fail(msg){ show('connecting'); $('cmsg').className='err'; $('cmsg').textContent = msg; }
+
+  if(!PEER || !TOKEN || !HOST){ fail('This QR code is not valid. Ask the shop for a new one.'); return; }
+  if(EXP && Date.now() > EXP){ fail('This QR code has expired. Ask the shop for a new one.'); return; }
+
+  var opts = { host: HOST, port: PORT, path: PATH, secure: SECURE, config: { iceServers: LAN ? [] : [{ urls: 'stun:stun.l.google.com:19302' }] } };
+  var peer = new Peer(opts);
+  var spare = null;                     // first authenticated connection, carries the first PDF
+  var queue = [], running = 0, CONC = 3;  // up to 3 PDFs upload at the same time
+  var okN = 0, badN = 0, picked = false;
+
+  // One connection per PDF: files upload in parallel and never interleave.
+  function getConn(){
+    if(spare){
+      var s = spare; spare = null;
+      if(s.conn && s.conn.open) return Promise.resolve(s);
+    }
+    return new Promise(function(resolve, reject){
+      var conn = peer.connect(PEER, { reliable: true });
+      var settled = false;
+      var t = setTimeout(function(){ settled = true; try{ conn.close(); }catch(e){} reject(new Error('no-answer')); }, 15000);
+      function onMsg(m){
+        if(!m || typeof m !== 'object') return;
+        if(m.type === 'auth-ok'){
+          settled = true; clearTimeout(t); conn.off('data', onMsg);
+          if(m.shop){ $('shop').textContent = m.shop; }
+          if(typeof m.maxMB === 'number'){ MAXMB = m.maxMB; setLimit(); }
+          window.__pin = m.pin;
+          resolve({ conn: conn, pin: m.pin });
+        } else if(m.type === 'auth-fail'){
+          settled = true; clearTimeout(t); conn.off('data', onMsg); try{ conn.close(); }catch(e){}
+          reject(new Error(m.reason || 'This QR code is no longer valid. Ask the shop for a new one.'));
+        }
+      }
+      conn.on('data', onMsg);
+      conn.on('open', function(){ conn.send({ type: 'auth', token: TOKEN }); });
+      conn.on('error', function(){ if(!settled){ settled = true; clearTimeout(t); reject(new Error('conn-error')); } });
+      conn.on('close', function(){ if(!settled){ settled = true; clearTimeout(t); reject(new Error('closed')); } });
+    });
+  }
+
+  function rowFor(f, n){
+    var row = document.createElement('div'); row.className = 'frow';
+    var name = document.createElement('p'); name.className = 'fname'; name.textContent = n + '. ' + f.name;
+    var meter = document.createElement('div'); meter.className = 'meter'; meter.innerHTML = '<i></i>';
+    var stat = document.createElement('p'); stat.className = 'fstat'; stat.textContent = 'Waiting…';
+    row.appendChild(name); row.appendChild(meter); row.appendChild(stat);
+    $('flist').appendChild(row);
+    return { bar: meter.firstChild, stat: stat, ended: false };
+  }
+
+  function failRow(ui, msg){
+    if(ui.ended) return;
+    ui.ended = true; badN++;
+    ui.stat.className = 'fstat err'; ui.stat.textContent = msg;
+    ui.bar.parentNode.style.display = 'none';
+    setSummary();
+  }
+
+  function setSummary(){
+    if(queue.length || running || !(okN || badN)) return;
+    var parts = [];
+    if(okN) parts.push(okN + ' file' + (okN > 1 ? 's' : '') + ' sent');
+    if(badN) parts.push(badN + ' failed');
+    var el = $('summary');
+    el.className = badN && !okN ? 'err' : 'ok';
+    el.textContent = parts.join(' - ') + '. ' + (okN ? (okN > 1 ? 'Tell the shop the codes above.' : 'Tell the shop the code above.') : 'Please try again.');
+    $('morebtn').hidden = false;
+  }
+
+  async function sendFile(f, ui){
+    ui.stat.textContent = 'Connecting…';
+    var c;
+    try { c = await getConn(); }
+    catch(e){
+      var m = (e && e.message) || '';
+      failRow(ui, m === 'no-answer' ? 'Could not reach the shop.' : (m === 'closed' || m === 'conn-error' || m === 'auth-fail' ? 'The shop could not connect this QR code.' : (m || 'Could not connect.')));
+      return;
+    }
+    var conn = c.conn;
+    conn.on('close', function(){ failRow(ui, 'Connection lost. Please try again.'); });
+    conn.on('data', function(m){
+      if(!m || typeof m !== 'object') return;
+      if(m.type === 'received'){
+        if(ui.ended) return; ui.ended = true; okN++; setSummary();
+        ui.stat.className = 'fstat ok'; ui.stat.textContent = 'Sent ✓ - code ' + c.pin;
+      } else if(m.type === 'rejected'){
+        failRow(ui, (m.reason || 'The shop could not accept this file.') + ' - code ' + c.pin);
+      } else if(m.type === 'status'){
+        if(m.status === 'printing'){ ui.stat.className = 'fstat'; ui.stat.textContent = 'Printing… - code ' + c.pin; }
+        else if(m.status === 'done'){ ui.stat.className = 'fstat ok'; ui.stat.textContent = 'Printed ✓ collect it at the counter - code ' + c.pin; }
+        else if(m.status === 'rejected' || m.status === 'failed'){ ui.stat.className = 'fstat err'; ui.stat.textContent = (m.reason || 'The shop declined this file.') + ' - code ' + c.pin; }
+      }
+    });
+    conn.send({ type: 'meta', name: f.name, size: f.size });
+    ui.stat.textContent = 'Sending… - code ' + c.pin;
+    var buf = await f.arrayBuffer(), CH = 16384, dc = conn.dataChannel;
+    for(var off = 0; off < buf.byteLength; off += CH){
+      while(dc && dc.bufferedAmount > 1048576){ await new Promise(function(r){ setTimeout(r, 25); }); }
+      try { conn.send(buf.slice(off, off + CH)); } catch(e){ return; }
+      ui.bar.style.width = Math.min(100, Math.round((off + CH) / buf.byteLength * 100)) + '%';
+    }
+    try { conn.send({ type: 'done' }); } catch(e){ return; }
+    ui.stat.textContent = 'Finishing… - code ' + c.pin;
+  }
+
+  function pump(){
+    while(running < CONC && queue.length){
+      var t = queue.shift(); running++;
+      t().then(function(){ running--; pump(); setSummary(); }, function(){ running--; pump(); setSummary(); });
+    }
+  }
+
+  $('file').addEventListener('change', function(){
+    var files = Array.prototype.slice.call(this.files || []); this.value = '';
+    var bad = [], good = [], i, f;
+    for(i = 0; i < files.length; i++){
+      f = files[i];
+      if(!(f.type === 'application/pdf' || /\.pdf$/i.test(f.name))) bad.push(f.name + ': not a PDF');
+      else if(MAXMB > 0 && f.size > MAXMB*1024*1024) bad.push(f.name + ': too large (max ' + MAXMB + ' MB)');
+      else good.push(f);
+    }
+    var midBatch = queue.length || running;
+    if(bad.length){
+      var errEl = midBatch ? $('summary') : $('perr');
+      errEl.className = 'err'; errEl.textContent = bad.join(' - ');
+    }
+    if(!good.length) return;
+    picked = true;
+    show('sending'); $('morebtn').hidden = true;
+    var n0 = $('flist').children.length;
+    for(i = 0; i < good.length; i++){
+      (function(f2, n2){
+        var ui = rowFor(f2, n2);
+        queue.push(function(){
+          return sendFile(f2, ui).catch(function(){ failRow(ui, 'Could not send this file. Please try again.'); });
+        });
+      })(good[i], n0 + i + 1);
+    }
+    pump();
+  });
+
+  var probed = false;
+  var timer = setTimeout(function(){ if(!probed && !picked) fail('Could not reach the shop. Check you are on the shop WiFi (if asked) and try again.'); }, 20000);
+  peer.on('error', function(e){ if(!probed && !picked) fail('Connection problem (' + (e.type || 'error') + '). Please scan the QR again.'); });
+  peer.on('disconnected', function(){ try{ peer.reconnect(); }catch(e){} });
+  getConn().then(function(c){
+    probed = true; clearTimeout(timer);
+    spare = c; show('pick');
+  }, function(e){
+    probed = true; clearTimeout(timer);
+    var m = (e && e.message) || '';
+    if(m === 'no-answer') fail('Could not reach the shop. Check you are on the shop WiFi (if asked) and try again.');
+    else if(m === 'closed' || m === 'conn-error') fail('Connection to the shop failed. Please scan the QR again.');
+    else if(m) fail(m);
+    else fail('This QR code is no longer valid. Ask the shop for a new one.');
+  });
+})();
+</script>
+</body>
+</html>

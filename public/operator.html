@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Shop console</title>
+<style>
+  :root{--ink:#0b1220;--panel:#18243d;--line:#25344f;--text:#eef2fa;--mute:#9fb0cf;--c:#00aeef;--m:#ec008c;--y:#ffd400}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:var(--ink);color:var(--text);font:16px/1.45 ui-rounded,system-ui,"Segoe UI",Roboto,sans-serif;display:grid;place-items:center;padding:16px}
+  main{width:100%;max-width:520px}
+  .bar{height:6px;border-radius:3px;background:linear-gradient(90deg,var(--c) 33%,var(--m) 33% 66%,var(--y) 66%);margin-bottom:18px}
+  h1{font-size:24px;margin:0 0 2px}
+  h2{font-size:17px;margin:0 0 8px}
+  p{margin:6px 0;color:var(--mute)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin-top:14px}
+  .btn{display:block;width:100%;padding:14px;border-radius:12px;border:0;background:var(--c);color:#00121c;font:inherit;font-weight:700;text-align:center;cursor:pointer;margin-top:10px}
+  .btn:focus-visible{outline:3px solid var(--y);outline-offset:2px}
+  label{display:block;font-size:13px;color:var(--mute);margin:10px 0 4px}
+  input{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--ink);color:var(--text);font:inherit}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#6b7280;margin-right:8px;vertical-align:1px}
+  .dot.ok{background:#34d399}.dot.warn{background:var(--y)}.dot.err{background:#ff5d8f}
+  .jrow{border-top:1px solid var(--line);padding:12px 0}
+  .jrow:first-of-type{border-top:0}
+  .jtop{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+  .jname{overflow-wrap:anywhere}
+  .jstat{font-size:12px;font-weight:700;padding:2px 8px;border-radius:99px;background:var(--line);color:var(--mute);white-space:nowrap}
+  .jstat.ok{color:#7ee0a6}.jstat.err{color:#ff8fb8}.jstat.warn{color:var(--y)}
+  .jmeta{font-size:13px;margin:4px 0 0}
+  .jnote{font-size:13px;margin:4px 0 0;color:var(--y)}
+  .jacts{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .sbtn{padding:9px 14px;border-radius:10px;border:0;font:inherit;font-weight:700;cursor:pointer}
+  .sbtn:disabled{opacity:.5}
+  .btn-pc{background:var(--c);color:#00121c}
+  .btn-line{background:transparent;border:1px solid var(--line);color:var(--text)}
+  .empty{color:#5b6b8a;padding:4px 0}
+  .n{color:var(--mute);font-weight:400}
+  .err{color:#ff8fb8}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <div class="bar"></div>
+  <h1 id="shop">Shop console</h1>
+  <p>Queue and print control for this shop.</p>
+
+  <div class="card"><span class="dot" id="sdot"></span><span id="smsg">Starting…</span>
+    <button class="sbtn btn-line" id="logout" hidden style="float:right;margin-top:-6px">Log out</button>
+  </div>
+
+  <div class="card" id="login" hidden>
+    <h2>Log in to the shop</h2>
+    <label>Shop ID (from the console link)</label>
+    <input id="pid" autocapitalize="off" autocomplete="off">
+    <label>Shop PC address</label>
+    <input id="addr" placeholder="192.168.1.10">
+    <label>Port</label>
+    <input id="portf" inputmode="numeric" placeholder="8787">
+    <label>Access code</label>
+    <input id="code" autocapitalize="characters" autocomplete="off" placeholder="ABCDEF">
+    <button class="btn" id="gologin">Log in</button>
+    <p id="lerr" class="err"></p>
+  </div>
+
+  <div class="card" id="cin" hidden><h2>Incoming <span class="n" id="ni"></span></h2><div id="li"></div></div>
+  <div class="card" id="cpr" hidden><h2>Printing <span class="n" id="np"></span></h2><div id="lp"></div></div>
+  <div class="card" id="cdn" hidden><h2>Done <span class="n" id="nd"></span></h2><div id="ld"></div></div>
+</main>
+
+<script src="peerjs.min.js"></script>
+<script>
+(function(){
+  var q = new URLSearchParams(location.search);
+  var P = q.get('p') || '', H = q.get('h') || '', O = +q.get('o') || 8787, A = q.get('a') || '/peerjs';
+  var X = q.get('x') === '1', N = q.get('n') || 'Shop console', CODE = q.get('c') || '';
+  var $ = function(id){ return document.getElementById(id); };
+
+  // Remember the pairing for the rest of this browser session (survives refresh).
+  try {
+    var saved = JSON.parse(sessionStorage.getItem('xs-op') || 'null');
+    if (saved) {
+      P = P || saved.p || ''; H = H || saved.h || ''; O = saved.o || O; A = saved.a || A;
+      X = X || !!saved.x; CODE = CODE || saved.c || '';
+    }
+  } catch(e){}
+
+  $('shop').textContent = N;
+  document.title = N;
+
+  function save() { try { sessionStorage.setItem('xs-op', JSON.stringify({ p:P, h:H, o:O, a:A, x:X, c:CODE })); } catch(e){} }
+  function setStatus(cls, msg) { $('sdot').className = 'dot ' + cls; $('smsg').textContent = msg; }
+  function showLogin(msg){
+    $('login').hidden = false; $('cin').hidden = $('cpr').hidden = $('cdn').hidden = true; $('logout').hidden = true;
+    $('lerr').textContent = msg || '';
+    if (P) $('pid').value = P;
+    if (H) $('addr').value = H;
+    if (O) $('portf').value = O;
+    if (CODE) $('code').value = CODE;
+  }
+  function showBoard(){ $('login').hidden = true; $('cin').hidden = $('cpr').hidden = $('cdn').hidden = false; $('logout').hidden = false; }
+
+  var peer = null, conn = null, jobs = [], timer = null;
+
+  function schedule(){
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(connect, 3000);
+  }
+
+  function connect(){
+    if (!P || !H || !CODE){ showLogin(); setStatus('', 'Log in to connect.'); return; }
+    setStatus('warn', 'Connecting to ' + H + '…');
+    try { peer && peer.destroy(); } catch(e){}
+    peer = new Peer({ host: H, port: O, path: A, secure: X, config: { iceServers: [] } });
+    peer.on('open', function(){
+      conn = peer.connect(P, { reliable: true });
+      conn.on('open', function(){ conn.send({ type: 'op-auth', code: CODE }); });
+      conn.on('data', onMsg);
+      conn.on('close', function(){ setStatus('err', 'Connection lost - reconnecting…'); schedule(); });
+    });
+    peer.on('error', function(e){
+      var t = (e && e.type) || 'error';
+      setStatus('err', t === 'peer-unavailable' ? 'Shop app is not open on ' + H + ' - waiting…' : 'Connection problem (' + t + ') - retrying…');
+      schedule();
+    });
+    peer.on('disconnected', function(){ try { peer.reconnect(); } catch(e){ schedule(); } });
+  }
+
+  function onMsg(m){
+    if (!m || typeof m !== 'object') return;
+    if (m.type === 'op-ok'){ CODE = CODE; save(); showBoard(); setStatus('ok', 'Live - ' + (m.shop || N)); jobs = m.jobs || []; render(); }
+    else if (m.type === 'op-fail'){ CODE = ''; jobs = []; setStatus('err', m.reason || 'Login failed.'); showLogin(m.reason || 'Wrong access code.'); }
+    else if (m.type === 'jobs'){ jobs = m.jobs || []; render(); }
+  }
+
+  function sz(b){ return b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB'; }
+  var LABEL = { incoming: 'New', held: 'On hold', printing: 'Printing…', done: 'Printed', failed: 'Failed', rejected: 'Declined' };
+
+  function btn(label, act, id, cls){
+    var b = document.createElement('button');
+    b.className = 'sbtn ' + cls; b.textContent = label;
+    b.onclick = function(){ if (conn && conn.open) { conn.send({ type: 'op-cmd', act: act, id: id }); b.disabled = true; b.textContent = '…'; } };
+    return b;
+  }
+
+  function row(j){
+    var r = document.createElement('div'); r.className = 'jrow';
+    var top = document.createElement('div'); top.className = 'jtop';
+    var nm = document.createElement('b'); nm.className = 'jname'; nm.textContent = j.filename; top.appendChild(nm);
+    var st = document.createElement('span');
+    st.className = 'jstat ' + (j.status === 'done' ? 'ok' : (j.status === 'failed' || j.status === 'rejected') ? 'err' : 'warn');
+    st.textContent = LABEL[j.status] || j.status;
+    top.appendChild(st); r.appendChild(top);
+    var meta = document.createElement('p'); meta.className = 'jmeta';
+    meta.textContent = j.pages + ' page' + (j.pages === 1 ? '' : 's') + ' - ' + sz(j.size) + ' - code ' + j.pin
+      + (j.copies > 1 ? ' - ' + j.copies + ' copies' : '') + (j.color ? '' : ' - black & white');
+    r.appendChild(meta);
+    if (j.note && (j.status === 'incoming' || j.status === 'held' || j.status === 'failed')){
+      var note = document.createElement('p'); note.className = 'jnote'; note.textContent = j.note; r.appendChild(note);
+    }
+    var acts = document.createElement('div'); acts.className = 'jacts';
+    if (j.status === 'incoming' || j.status === 'held'){
+      acts.appendChild(btn('Print', 'print', j.id, 'btn-pc'));
+      if (j.status === 'incoming') acts.appendChild(btn('Hold', 'hold', j.id, 'btn-line'));
+      acts.appendChild(btn('Reject', 'reject', j.id, 'btn-line'));
+    } else if (j.status === 'failed'){
+      acts.appendChild(btn('Try again', 'print', j.id, 'btn-pc'));
+      acts.appendChild(btn('Reject', 'reject', j.id, 'btn-line'));
+    } else if (j.status === 'printing'){
+      var w = document.createElement('span'); w.className = 'jmeta'; w.textContent = 'Sending to the printer…'; acts.appendChild(w);
+    }
+    if (acts.childNodes.length) r.appendChild(acts);
+    return r;
+  }
+
+  function fill(el, list, empty){
+    el.textContent = '';
+    if (!list.length){ var p = document.createElement('p'); p.className = 'empty'; p.textContent = empty; el.appendChild(p); return; }
+    for (var i = 0; i < list.length; i++) el.appendChild(row(list[i]));
+  }
+
+  function render(){
+    var ain = [], apr = [], adn = [];
+    for (var i = 0; i < jobs.length; i++){
+      var j = jobs[i];
+      if (j.status === 'incoming' || j.status === 'held') ain.push(j);
+      else if (j.status === 'printing') apr.push(j);
+      else adn.push(j);
+    }
+    adn = adn.slice(0, 20);
+    fill($('li'), ain, 'No new jobs.'); fill($('lp'), apr, 'Nothing printing.'); fill($('ld'), adn, 'Nothing yet.');
+    $('ni').textContent = ain.length; $('np').textContent = apr.length; $('nd').textContent = adn.length;
+  }
+
+  $('gologin').onclick = function(){
+    P = $('pid').value.trim(); H = $('addr').value.trim(); O = +$('portf').value || 8787;
+    A = A || '/peerjs'; CODE = $('code').value.trim().toUpperCase();
+    if (!P || !H || !CODE){ $('lerr').textContent = 'Fill in the shop ID, address and access code.'; return; }
+    save(); connect();
+  };
+  $('logout').onclick = function(){
+    try { sessionStorage.removeItem('xs-op'); } catch(e){}
+    CODE = ''; jobs = []; conn && conn.close();
+    setStatus('', 'Logged out.'); showLogin();
+  };
+
+  if (P && H && CODE) connect(); else { setStatus('', 'Log in to connect.'); showLogin(); }
+})();
+</script>
+</body>
+</html>
